@@ -1,6 +1,7 @@
 import os
 import json as _json
 import smtplib
+import socket
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from typing import Optional
@@ -11,6 +12,16 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
+
+# Render's outbound network doesn't support IPv6 — some providers (like Gmail's SMTP)
+# resolve to an IPv6 address first, causing "Network is unreachable". Force IPv4-only
+# DNS resolution globally so this can't happen on any outbound connection (SMTP, webhooks, APIs).
+_original_getaddrinfo = socket.getaddrinfo
+def _ipv4_only_getaddrinfo(*args, **kwargs):
+    responses = _original_getaddrinfo(*args, **kwargs)
+    ipv4_only = [r for r in responses if r[0] == socket.AF_INET]
+    return ipv4_only if ipv4_only else responses
+socket.getaddrinfo = _ipv4_only_getaddrinfo
 
 # ---------------------------------------------------------------
 # Database setup
@@ -133,6 +144,7 @@ class ConnectionOut(BaseModel):
 class SendMessageRequest(BaseModel):
     owner_token: str
     connection_id: int
+    to_address: Optional[str] = None  # who to send to — chosen per message, not fixed on the connection
     subject: Optional[str] = None
     body: str
 
@@ -406,13 +418,12 @@ def delete_connection(connection_id: int, owner_token: str, db: Session = Depend
 # ---------------------------------------------------------------
 # Sending engine
 # ---------------------------------------------------------------
-def send_via_smtp(config: dict, subject: str, body: str):
+def send_via_smtp(config: dict, subject: str, body: str, to_addr: str):
     host = config["host"]
     port = int(config.get("port", 587))
     username = config["username"]
     password = config["password"]
     from_addr = config.get("from_address", username)
-    to_addr = config["to_address"]
     use_ssl = config.get("use_ssl", port == 465)
 
     msg = MIMEText(body)
@@ -464,7 +475,9 @@ def send_message(payload: SendMessageRequest, db: Session = Depends(get_db)):
     status = "sent"
     try:
         if conn.conn_type == "smtp":
-            send_via_smtp(config, payload.subject or "", payload.body)
+            if not payload.to_address:
+                raise ValueError("An email address to send to is required")
+            send_via_smtp(config, payload.subject or "", payload.body, payload.to_address)
         elif conn.conn_type == "webhook":
             send_via_webhook(config, payload.subject or "", payload.body)
         elif conn.conn_type == "http":
