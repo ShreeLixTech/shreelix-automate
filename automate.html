@@ -1,0 +1,658 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShreeLix Automate</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy:#0B1F3A; --navy-soft:#132A4D; --blue:#1E90FF; --blue-deep:#0B5FCC;
+    --amber:#F59E0B; --bg:#F8FAFC; --card:#FFFFFF; --text:#1E293B;
+    --muted:#5B6B82; --border:#E3E8F0; --green:#0E7A45; --green-bg:#E7F8F0;
+    --red:#C0392B; --red-bg:#FDECEA;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);line-height:1.5;}
+  h1,h2,h3{font-family:'Poppins',sans-serif;color:var(--navy);}
+  a{color:inherit;text-decoration:none;}
+  .wrap{max-width:1100px;margin:0 auto;padding:0 24px;}
+
+  nav{background:var(--navy);padding:16px 0;}
+  nav .wrap{display:flex;align-items:center;justify-content:space-between;}
+  .brand{display:flex;align-items:center;gap:10px;font-family:'Poppins',sans-serif;font-weight:700;font-size:18px;color:#fff;}
+  .brand .mark{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--navy),var(--blue));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:14px;border:1px solid rgba(255,255,255,0.15);}
+  .back-link{font-size:13.5px;color:rgba(255,255,255,0.75);}
+  .back-link:hover{color:#fff;}
+
+  header.page{padding:40px 0 8px;}
+  header.page h1{font-size:30px;font-weight:700;}
+  header.page p{color:var(--muted);margin-top:8px;font-size:15px;max-width:600px;}
+  .status-row{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;color:var(--muted);}
+  .dot{width:8px;height:8px;border-radius:50%;background:#ccc;}
+  .dot.live{background:var(--green);}
+  .dot.down{background:var(--red);}
+
+  .tabs{display:flex;gap:6px;margin:28px 0 20px;border-bottom:1px solid var(--border);}
+  .tab{padding:12px 18px;font-size:14.5px;font-weight:600;color:var(--muted);cursor:pointer;border-bottom:2.5px solid transparent;}
+  .tab.active{color:var(--navy);border-bottom-color:var(--blue);}
+  .panel{display:none;padding-bottom:60px;}
+  .panel.active{display:block;}
+
+  .grid2{display:grid;grid-template-columns:1fr 1.4fr;gap:24px;align-items:start;}
+  @media(max-width:800px){.grid2{grid-template-columns:1fr;}}
+
+  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;}
+  .card h3{font-size:17px;font-weight:600;margin-bottom:16px;}
+
+  label{display:block;font-size:13px;font-weight:600;color:var(--navy);margin-bottom:6px;margin-top:14px;}
+  label:first-child{margin-top:0;}
+  input, select, textarea{
+    width:100%;padding:10px 12px;border:1px solid var(--border);border-radius:8px;
+    font-family:'Inter',sans-serif;font-size:14px;background:#fff;color:var(--text);
+  }
+  textarea{resize:vertical;min-height:120px;}
+  input:focus, select:focus, textarea:focus{outline:2px solid var(--blue);outline-offset:1px;border-color:var(--blue);}
+  .hint{font-size:12px;color:var(--muted);margin-top:5px;}
+
+  .btn{
+    display:inline-flex;align-items:center;justify-content:center;gap:6px;
+    background:var(--navy);color:#fff;padding:11px 20px;border-radius:8px;
+    font-weight:600;font-size:14px;border:none;cursor:pointer;margin-top:18px;width:100%;
+  }
+  .btn:hover{background:var(--navy-soft);}
+  .btn:disabled{opacity:0.5;cursor:not-allowed;}
+  .btn.secondary{background:transparent;border:1.5px solid var(--border);color:var(--navy);}
+  .btn.small{width:auto;padding:6px 12px;font-size:12.5px;margin-top:0;}
+  .btn.danger{background:var(--red);}
+
+  table{width:100%;border-collapse:collapse;font-size:14px;}
+  th{text-align:left;font-size:12px;text-transform:uppercase;letter-spacing:0.03em;color:var(--muted);padding:10px 12px;border-bottom:1px solid var(--border);}
+  td{padding:12px;border-bottom:1px solid var(--border);}
+  tr:last-child td{border-bottom:none;}
+  .empty{padding:36px 20px;text-align:center;color:var(--muted);font-size:14px;}
+  .empty .big{font-size:28px;margin-bottom:8px;}
+
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:12px;font-weight:600;padding:3px 9px;border-radius:999px;}
+  .badge.sent{background:var(--green-bg);color:var(--green);}
+  .badge.failed{background:var(--red-bg);color:var(--red);}
+  .conn-type-badge{display:inline-flex;font-size:10.5px;font-weight:700;padding:2px 8px;border-radius:5px;text-transform:uppercase;letter-spacing:0.02em;}
+  .conn-type-badge.smtp{background:#EAF2FF;color:var(--blue-deep);}
+  .conn-type-badge.webhook{background:#F3E8FF;color:#7E22CE;}
+  .conn-type-badge.http{background:#FFF3E0;color:#B8720C;}
+
+  .conn-row{display:flex;justify-content:space-between;align-items:center;padding:14px;border:1px solid var(--border);border-radius:10px;margin-bottom:10px;}
+  .conn-row .cname{font-weight:600;font-size:14px;color:var(--navy);}
+  .conn-row .cdetail{font-size:12.5px;color:var(--muted);margin-top:3px;}
+
+  .type-selector{display:flex;gap:8px;margin-top:6px;}
+  .type-btn{flex:1;padding:12px 8px;border:1.5px solid var(--border);border-radius:8px;text-align:center;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;}
+  .type-btn.active{border-color:var(--blue);color:var(--blue-deep);background:#EAF2FF;}
+
+  .toast{
+    position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(120%);
+    background:var(--navy);color:#fff;padding:12px 22px;border-radius:10px;font-size:14px;font-weight:500;
+    transition:transform .25s ease;z-index:100;box-shadow:0 10px 30px rgba(0,0,0,0.2);
+  }
+  .toast.show{transform:translateX(-50%) translateY(0);}
+  .toast.error{background:var(--red);}
+
+  .overlay{display:none;position:fixed;inset:0;background:rgba(11,31,58,0.7);z-index:250;align-items:center;justify-content:center;padding:20px;}
+  .overlay.open, .overlay.force-open{display:flex;}
+  .modal{background:#fff;border-radius:18px;padding:32px;max-width:420px;width:100%;}
+</style>
+</head>
+<body>
+
+<nav>
+  <div class="wrap">
+    <div class="brand"><span class="mark">S</span> ShreeLix</div>
+    <a class="back-link" href="index.html">&larr; Back to website</a>
+  </div>
+</nav>
+
+<header class="page">
+  <div class="wrap">
+    <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;">
+      <div>
+        <h1>ShreeLix Automate</h1>
+        <p>Connect your own email, Slack, or any API — then send messages, alerts, or reports automatically. No code required.</p>
+      </div>
+      <div style="text-align:right;flex-shrink:0;">
+        <div id="tokenBadge" style="background:var(--bg);border:1px solid var(--border);padding:8px 14px;border-radius:999px;font-size:12.5px;font-weight:600;color:var(--navy);white-space:nowrap;">100 free credits left</div>
+        <a href="#" onclick="openPricing(event)" style="display:block;margin-top:8px;font-size:12.5px;color:var(--blue-deep);white-space:nowrap;font-weight:600;">💳 View pricing</a>
+        <a href="tel:+918840177216" style="display:block;margin-top:6px;font-size:12.5px;color:var(--muted);white-space:nowrap;">📞 +91 88401 77216</a>
+      </div>
+    </div>
+    <div class="status-row">
+      <span class="dot" id="statusDot"></span>
+      <span id="statusText">Checking connection…</span>
+    </div>
+  </div>
+</header>
+
+<div class="wrap">
+  <div class="tabs">
+    <div class="tab active" data-tab="connections">Connections</div>
+    <div class="tab" data-tab="compose">Compose & Send</div>
+    <div class="tab" data-tab="history">History</div>
+  </div>
+
+  <!-- CONNECTIONS -->
+  <div class="panel active" id="panel-connections">
+    <div class="grid2">
+      <div class="card">
+        <h3>Add a connection</h3>
+        <label>Type</label>
+        <div class="type-selector">
+          <div class="type-btn active" data-type="smtp" onclick="selectConnType('smtp')">Email (SMTP)</div>
+          <div class="type-btn" data-type="webhook" onclick="selectConnType('webhook')">Webhook</div>
+          <div class="type-btn" data-type="http" onclick="selectConnType('http')">HTTP API</div>
+        </div>
+        <label for="conn-name">Connection name</label>
+        <input id="conn-name" placeholder="e.g. My Gmail, Team Slack">
+
+        <div id="fields-smtp">
+          <label for="smtp-host">SMTP host</label>
+          <input id="smtp-host" placeholder="e.g. smtp.gmail.com">
+          <label for="smtp-port">Port</label>
+          <input id="smtp-port" type="number" value="587" placeholder="587">
+          <label for="smtp-username">Username / email</label>
+          <input id="smtp-username" placeholder="you@example.com">
+          <label for="smtp-password">Password / App Password</label>
+          <input id="smtp-password" type="password" placeholder="App password, not your login password">
+          <div class="hint">For Gmail: create an "App Password" in your Google Account → Security settings. Don't use your normal login password.</div>
+          <label for="smtp-to">Default recipient email</label>
+          <input id="smtp-to" placeholder="recipient@example.com">
+        </div>
+
+        <div id="fields-webhook" style="display:none;">
+          <label for="webhook-url">Webhook URL</label>
+          <input id="webhook-url" placeholder="https://hooks.slack.com/services/...">
+          <div class="hint">Works with Slack, Discord, Teams, Zapier, or any service that accepts an incoming webhook.</div>
+        </div>
+
+        <div id="fields-http" style="display:none;">
+          <label for="http-method">Method</label>
+          <select id="http-method">
+            <option value="POST">POST</option>
+            <option value="PUT">PUT</option>
+            <option value="GET">GET</option>
+          </select>
+          <label for="http-url">URL</label>
+          <input id="http-url" placeholder="https://api.example.com/notify">
+          <label for="http-headers">Headers (optional, one per line: Key: Value)</label>
+          <textarea id="http-headers" placeholder="Authorization: Bearer your-token
+Content-Type: application/json" style="min-height:70px;"></textarea>
+          <label for="http-body">Body template</label>
+          <textarea id="http-body" placeholder='{"message": "{{body}}", "title": "{{subject}}"}'></textarea>
+          <div class="hint">Use <code>{{subject}}</code> and <code>{{body}}</code> as placeholders — they'll be filled in when you send.</div>
+        </div>
+
+        <button class="btn" id="addConnBtn">Save connection</button>
+      </div>
+      <div class="card">
+        <h3>Your connections</h3>
+        <div id="connectionsWrap"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- COMPOSE -->
+  <div class="panel" id="panel-compose">
+    <div class="card" style="max-width:600px;">
+      <h3>Compose a message</h3>
+      <label for="send-connection">Send via</label>
+      <select id="send-connection"></select>
+      <label for="send-subject">Subject <span style="font-weight:400;color:var(--muted);">(used for email/webhook subject field)</span></label>
+      <input id="send-subject" placeholder="Write anything — this is completely up to you">
+      <label for="send-body">Message</label>
+      <textarea id="send-body" placeholder="Write your message here. Use {{name}}, {{date}}, or any placeholder you want to fill in manually before sending."></textarea>
+      <button class="btn" id="sendBtn">Send now</button>
+      <div id="sendResult" style="margin-top:14px;font-size:13.5px;"></div>
+    </div>
+  </div>
+
+  <!-- HISTORY -->
+  <div class="panel" id="panel-history">
+    <div class="card">
+      <h3>Recent activity</h3>
+      <div id="historyWrap"><div class="empty">Loading…</div></div>
+    </div>
+  </div>
+</div>
+
+<!-- SIGN IN (Google) -->
+<div class="overlay" id="signInOverlay">
+  <div class="modal" style="text-align:center;">
+    <div style="width:52px;height:52px;border-radius:14px;background:linear-gradient(135deg,var(--navy),var(--blue));display:flex;align-items:center;justify-content:center;margin:0 auto 16px;overflow:hidden;">
+      <img src="assets/shreelix-logo-icon.png" alt="ShreeLix" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+      <span style="display:none;color:#fff;font-weight:800;font-size:22px;font-family:'Poppins',sans-serif;align-items:center;justify-content:center;width:100%;height:100%;">S</span>
+    </div>
+    <h3 style="font-size:19px;margin-bottom:6px;">Welcome to ShreeLix Automate</h3>
+    <p style="font-size:13.5px;color:var(--muted);margin-bottom:24px;">Sign in with Google — your connections and history stay tied to your account, on any device.</p>
+    <div id="googleSignInBtn" style="display:flex;justify-content:center;"></div>
+    <div id="signInError" style="color:var(--red);font-size:12.5px;margin-top:12px;"></div>
+  </div>
+</div>
+
+<!-- BUSINESS SETUP (first-time only) -->
+<div class="overlay" id="businessSetupOverlay">
+  <div class="modal">
+    <h3 style="font-size:19px;margin-bottom:6px;">One more thing</h3>
+    <p style="font-size:13.5px;color:var(--muted);margin-bottom:20px;">What should we call your account?</p>
+    <label>Business or team name *</label>
+    <input id="reg-business" placeholder="e.g. Sharma Traders, Marketing Team">
+    <div id="regError" style="color:var(--red);font-size:12.5px;margin-top:8px;"></div>
+    <button class="btn" id="regSubmitBtn" onclick="submitBusinessSetup()">Start using ShreeLix Automate</button>
+  </div>
+</div>
+
+<!-- PAYWALL -->
+<div class="overlay" id="paywallOverlay">
+  <div class="modal" style="text-align:center;">
+    <div style="width:56px;height:56px;border-radius:14px;background:linear-gradient(135deg,var(--navy),var(--blue));display:flex;align-items:center;justify-content:center;margin:0 auto 16px;overflow:hidden;">
+      <img src="assets/shreelix-logo-icon.png" alt="ShreeLix" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+      <span style="display:none;color:#fff;font-weight:800;font-size:24px;font-family:'Poppins',sans-serif;align-items:center;justify-content:center;width:100%;height:100%;">S</span>
+    </div>
+    <h3 style="font-size:20px;margin-bottom:8px;">You've used your free credits</h3>
+    <p style="font-size:14px;color:var(--muted);margin-bottom:16px;">You get 100 free actions to try ShreeLix Automate. Upgrade to keep going with no limits.</p>
+    <div style="background:var(--navy);border-radius:12px;padding:18px;margin-bottom:16px;">
+      <div style="font-size:12px;color:#9FD3FF;font-weight:600;text-transform:uppercase;letter-spacing:0.03em;margin-bottom:6px;">ShreeLix Automate — Pro</div>
+      <div style="font-size:30px;font-weight:800;color:#fff;font-family:'Poppins',sans-serif;">₹299<span style="font-size:14px;font-weight:500;color:rgba(255,255,255,0.7);">/month</span></div>
+      <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:4px;">Unlimited connections & messages</div>
+    </div>
+    <a href="tel:+918840177216" style="display:block;background:var(--navy);color:#fff;padding:13px;border-radius:10px;font-weight:600;font-size:14.5px;margin-bottom:10px;">📞 Call +91 88401 77216</a>
+    <a href="https://wa.me/918840177216?text=Hi%2C%20I'd%20like%20to%20upgrade%20to%20ShreeLix%20Automate%20Pro" target="_blank" style="display:block;background:#25D366;color:#fff;padding:13px;border-radius:10px;font-weight:600;font-size:14.5px;margin-bottom:14px;">💬 WhatsApp us</a>
+    <button onclick="document.getElementById('paywallOverlay').classList.remove('open')" style="background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;">Close</button>
+  </div>
+</div>
+
+<!-- PRICING -->
+<div class="overlay" id="pricingOverlay">
+  <div class="modal">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;">
+      <h3 style="font-size:19px;">Pricing</h3>
+      <button onclick="document.getElementById('pricingOverlay').classList.remove('open')" style="background:none;border:none;font-size:22px;color:var(--muted);cursor:pointer;">&times;</button>
+    </div>
+    <div style="border:1.5px solid var(--border);border-radius:14px;padding:18px;margin-bottom:14px;">
+      <div style="font-size:13px;font-weight:700;color:var(--navy);margin-bottom:4px;">Free</div>
+      <div style="font-size:24px;font-weight:800;color:var(--navy);font-family:'Poppins',sans-serif;margin-bottom:10px;">₹0</div>
+      <ul style="margin:0 0 0 18px;padding:0;font-size:13px;color:var(--muted);line-height:1.9;">
+        <li>100 free actions to try everything</li>
+        <li>Unlimited connections</li>
+        <li>SMTP, Webhook, and HTTP sending</li>
+      </ul>
+    </div>
+    <div style="border:1.5px solid var(--navy);border-radius:14px;padding:18px;background:var(--bg);">
+      <div style="font-size:13px;font-weight:700;color:var(--blue-deep);margin-bottom:4px;">Pro</div>
+      <div style="font-size:24px;font-weight:800;color:var(--navy);font-family:'Poppins',sans-serif;margin-bottom:10px;">₹299<span style="font-size:13px;font-weight:500;color:var(--muted);">/month</span></div>
+      <ul style="margin:0 0 0 18px;padding:0;font-size:13px;color:var(--text);line-height:1.9;">
+        <li>Unlimited messages sent</li>
+        <li>Everything in Free, no limits</li>
+        <li>Priority support</li>
+      </ul>
+    </div>
+    <p style="font-size:11.5px;color:var(--muted);margin-top:14px;text-align:center;">Call or WhatsApp <b>+91 88401 77216</b> to upgrade anytime.</p>
+  </div>
+</div>
+
+<footer style="border-top:1px solid var(--border);padding:24px 0;margin-top:20px;">
+  <div class="wrap" style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:10px;">
+    <div style="font-size:12.5px;color:var(--muted);">© 2026 ShreeLix. Building Smart Solutions.</div>
+    <div style="display:flex;gap:18px;font-size:12.5px;">
+      <a href="terms.html" style="color:var(--muted);">Terms of Service</a>
+      <a href="privacy.html" style="color:var(--muted);">Privacy Policy</a>
+      <a href="refund.html" style="color:var(--muted);">Refund Policy</a>
+    </div>
+  </div>
+</footer>
+
+<div class="toast" id="toast"></div>
+
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+<script>
+const API = "https://shreelix-automate-api.onrender.com";
+let connections = [];
+
+function toast(msg, isError=false){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isError ? ' error' : '');
+  setTimeout(()=> t.className = 'toast', 2800);
+}
+function escapeHtml(str){
+  const d = document.createElement('div');
+  d.textContent = str || '';
+  return d.innerHTML;
+}
+
+async function api(path, opts={}) {
+  const res = await fetch(API + path, {headers:{'Content-Type':'application/json'}, ...opts});
+  if (!res.ok) {
+    const err = await res.json().catch(()=>({detail:'Request failed'}));
+    throw new Error(err.detail || 'Request failed');
+  }
+  return res.json();
+}
+
+async function checkStatus(){
+  const dot = document.getElementById('statusDot');
+  const text = document.getElementById('statusText');
+  try {
+    await api('/health');
+    dot.className = 'dot live';
+    text.textContent = 'Connected';
+  } catch(e) {
+    dot.className = 'dot down';
+    text.textContent = 'API is waking up (free-tier hosting sleeps when idle) — retrying...';
+    setTimeout(checkStatus, 4000);
+  }
+}
+
+// ---------- Tabs ----------
+document.querySelectorAll('.tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-'+tab.dataset.tab).classList.add('active');
+    if (tab.dataset.tab === 'compose') populateSendConnectionDropdown();
+    if (tab.dataset.tab === 'history') loadHistory();
+  });
+});
+
+// ---------- Sign-In (Google) ----------
+const GOOGLE_CLIENT_ID = "121520616317-h33rgmtjgvc1gd2i2dga9i2nnjlmhi9v.apps.googleusercontent.com";
+let USER_TOKEN = localStorage.getItem('shreelix_automate_user_token') || null;
+let pendingCredential = null;
+let cachedTokensUsed = 0;
+const FREE_TOKEN_LIMIT = 100;
+
+function isSignedIn(){ return !!USER_TOKEN; }
+
+let googleInitDone = false;
+function initGoogleSignIn(){
+  if (googleInitDone) return;
+  if (!window.google || !google.accounts) { setTimeout(initGoogleSignIn, 300); return; }
+  googleInitDone = true;
+  google.accounts.id.initialize({
+    client_id: GOOGLE_CLIENT_ID,
+    callback: handleGoogleCredential,
+    auto_select: false,
+    cancel_on_tap_outside: true,
+  });
+  google.accounts.id.renderButton(document.getElementById('googleSignInBtn'), { theme: 'outline', size: 'large', width: 280 });
+}
+
+async function handleGoogleCredential(response){
+  const errEl = document.getElementById('signInError');
+  errEl.textContent = '';
+  try {
+    const result = await api('/auth/google', {method:'POST', body: JSON.stringify({credential: response.credential})});
+    USER_TOKEN = result.owner_token;
+    localStorage.setItem('shreelix_automate_user_token', USER_TOKEN);
+    document.getElementById('signInOverlay').classList.remove('force-open');
+
+    if (result.is_new_user) {
+      openBusinessSetup();
+    } else {
+      cachedTokensUsed = result.user.tokens_used;
+      updateTokenBadge();
+      loadConnections();
+    }
+  } catch(e) {
+    if (e.message && e.message.includes('business_name')) {
+      pendingCredential = response.credential;
+      document.getElementById('signInOverlay').classList.remove('force-open');
+      openBusinessSetup();
+    } else {
+      errEl.textContent = "Couldn't sign in right now — please try again.";
+    }
+  }
+}
+
+function openBusinessSetup(){
+  document.getElementById('businessSetupOverlay').classList.add('force-open');
+}
+
+async function submitBusinessSetup(){
+  const bizName = document.getElementById('reg-business').value.trim();
+  if (!bizName) { document.getElementById('regError').textContent = 'This field is required'; return; }
+  if (!pendingCredential) { document.getElementById('regError').textContent = 'Sign-in expired — please sign in again.'; return; }
+
+  const btn = document.getElementById('regSubmitBtn');
+  btn.disabled = true; btn.textContent = 'Starting…';
+  try {
+    const result = await api('/auth/google', {method:'POST', body: JSON.stringify({credential: pendingCredential, business_name: bizName})});
+    USER_TOKEN = result.owner_token;
+    localStorage.setItem('shreelix_automate_user_token', USER_TOKEN);
+    cachedTokensUsed = result.user.tokens_used;
+    updateTokenBadge();
+    document.getElementById('businessSetupOverlay').classList.remove('force-open');
+    loadConnections();
+  } catch(e) {
+    document.getElementById('regError').textContent = "Couldn't save — please try again.";
+  } finally {
+    btn.disabled = false; btn.textContent = 'Start using ShreeLix Automate';
+  }
+}
+
+function showSignInIfNeeded(){
+  if (!isSignedIn()) {
+    document.getElementById('signInOverlay').classList.add('force-open');
+    initGoogleSignIn();
+  } else {
+    refreshTokenStatus();
+  }
+}
+
+async function refreshTokenStatus(){
+  if (!isSignedIn()) return;
+  try {
+    const user = await api('/users/me?user_token=' + encodeURIComponent(USER_TOKEN));
+    cachedTokensUsed = user.tokens_used;
+    updateTokenBadge();
+  } catch(e) { /* non-critical */ }
+}
+
+function updateTokenBadge(){
+  const badge = document.getElementById('tokenBadge');
+  const left = Math.max(0, FREE_TOKEN_LIMIT - cachedTokensUsed);
+  if (badge) badge.textContent = left + ' free credits left';
+}
+
+async function consumeToken(){
+  if (!isSignedIn()) return false;
+  try {
+    const user = await api('/users/track?user_token=' + encodeURIComponent(USER_TOKEN), {method:'POST'});
+    cachedTokensUsed = user.tokens_used;
+    updateTokenBadge();
+    return true;
+  } catch(e) {
+    if (e.message && e.message.includes('credits used up')) {
+      document.getElementById('paywallOverlay').classList.add('open');
+    } else {
+      toast("Couldn't reach the server — please try again", true);
+    }
+    return false;
+  }
+}
+
+function openPricing(e){
+  if (e) e.preventDefault();
+  document.getElementById('pricingOverlay').classList.add('open');
+}
+
+// ---------- Connection type selector ----------
+function selectConnType(type){
+  document.querySelectorAll('.type-btn').forEach(b => b.classList.toggle('active', b.dataset.type === type));
+  document.getElementById('fields-smtp').style.display = type === 'smtp' ? 'block' : 'none';
+  document.getElementById('fields-webhook').style.display = type === 'webhook' ? 'block' : 'none';
+  document.getElementById('fields-http').style.display = type === 'http' ? 'block' : 'none';
+}
+
+// ---------- Connections ----------
+async function loadConnections(){
+  const wrap = document.getElementById('connectionsWrap');
+  try {
+    connections = await api('/connections?owner_token=' + encodeURIComponent(USER_TOKEN));
+    if (connections.length === 0) {
+      wrap.innerHTML = `<div class="empty"><div class="big">🔌</div>No connections yet — add one on the left.</div>`;
+      return;
+    }
+    wrap.innerHTML = connections.map(c => `
+      <div class="conn-row">
+        <div>
+          <span class="conn-type-badge ${c.conn_type}">${c.conn_type}</span>
+          <div class="cname" style="margin-top:6px;">${escapeHtml(c.name)}</div>
+          <div class="cdetail">${escapeHtml(c.masked_detail)}</div>
+        </div>
+        <button class="btn small danger" onclick="deleteConnection(${c.id}, '${escapeHtml(c.name).replace(/'/g,"\\'")}')">Delete</button>
+      </div>
+    `).join('');
+  } catch(e) {
+    wrap.innerHTML = `<div class="empty">Couldn't load connections — the API may still be waking up.</div>`;
+  }
+}
+
+document.getElementById('addConnBtn').addEventListener('click', async () => {
+  if (!(await consumeToken())) return;
+  const type = document.querySelector('.type-btn.active').dataset.type;
+  const name = document.getElementById('conn-name').value.trim();
+  if (!name) { toast('Give this connection a name', true); return; }
+
+  let config = {};
+  if (type === 'smtp') {
+    config = {
+      host: document.getElementById('smtp-host').value.trim(),
+      port: parseInt(document.getElementById('smtp-port').value) || 587,
+      username: document.getElementById('smtp-username').value.trim(),
+      password: document.getElementById('smtp-password').value,
+      to_address: document.getElementById('smtp-to').value.trim(),
+    };
+    if (!config.host || !config.username || !config.password || !config.to_address) {
+      toast('Fill in all email fields', true); return;
+    }
+  } else if (type === 'webhook') {
+    config = { url: document.getElementById('webhook-url').value.trim() };
+    if (!config.url) { toast('Enter a webhook URL', true); return; }
+  } else if (type === 'http') {
+    const headersRaw = document.getElementById('http-headers').value.trim();
+    const headers = {};
+    headersRaw.split('\n').forEach(line => {
+      const idx = line.indexOf(':');
+      if (idx > 0) headers[line.slice(0,idx).trim()] = line.slice(idx+1).trim();
+    });
+    config = {
+      method: document.getElementById('http-method').value,
+      url: document.getElementById('http-url').value.trim(),
+      headers,
+      body_template: document.getElementById('http-body').value,
+    };
+    if (!config.url) { toast('Enter an API URL', true); return; }
+  }
+
+  const btn = document.getElementById('addConnBtn');
+  btn.disabled = true; btn.textContent = 'Saving…';
+  try {
+    await api('/connections', {method:'POST', body: JSON.stringify({owner_token: USER_TOKEN, name, conn_type: type, config})});
+    toast('Connection saved');
+    document.getElementById('conn-name').value = '';
+    ['smtp-host','smtp-port','smtp-username','smtp-password','smtp-to','webhook-url','http-url','http-headers','http-body'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el && id !== 'smtp-port') el.value = '';
+    });
+    document.getElementById('smtp-port').value = '587';
+    loadConnections();
+  } catch(e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Save connection';
+  }
+});
+
+async function deleteConnection(id, name){
+  if (!confirm(`Delete "${name}"? This can't be undone.`)) return;
+  try {
+    await api('/connections/'+id+'?owner_token='+encodeURIComponent(USER_TOKEN), {method:'DELETE'});
+    toast('Connection deleted');
+    loadConnections();
+  } catch(e) {
+    toast(e.message, true);
+  }
+}
+
+// ---------- Compose & Send ----------
+function populateSendConnectionDropdown(){
+  const select = document.getElementById('send-connection');
+  if (connections.length === 0) {
+    select.innerHTML = `<option value="">No connections yet — add one first</option>`;
+    return;
+  }
+  select.innerHTML = connections.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${c.conn_type})</option>`).join('');
+}
+
+document.getElementById('sendBtn').addEventListener('click', async () => {
+  const connId = document.getElementById('send-connection').value;
+  const subject = document.getElementById('send-subject').value.trim();
+  const body = document.getElementById('send-body').value.trim();
+  const resultEl = document.getElementById('sendResult');
+  resultEl.textContent = '';
+
+  if (!connId) { toast('Choose a connection to send through', true); return; }
+  if (!body) { toast('Write a message first', true); return; }
+  if (!(await consumeToken())) return;
+
+  const btn = document.getElementById('sendBtn');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    await api('/send', {method:'POST', body: JSON.stringify({owner_token: USER_TOKEN, connection_id: parseInt(connId), subject, body})});
+    toast('Message sent');
+    resultEl.innerHTML = `<span style="color:var(--green);font-weight:600;">✓ Sent successfully</span>`;
+    document.getElementById('send-subject').value = '';
+    document.getElementById('send-body').value = '';
+  } catch(e) {
+    resultEl.innerHTML = `<span style="color:var(--red);font-weight:600;">✗ ${escapeHtml(e.message)}</span>`;
+    toast('Send failed', true);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Send now';
+  }
+});
+
+// ---------- History ----------
+async function loadHistory(){
+  const wrap = document.getElementById('historyWrap');
+  try {
+    const logs = await api('/logs?owner_token=' + encodeURIComponent(USER_TOKEN));
+    if (logs.length === 0) {
+      wrap.innerHTML = `<div class="empty"><div class="big">📋</div>No messages sent yet.</div>`;
+      return;
+    }
+    wrap.innerHTML = `<table>
+      <thead><tr><th>Connection</th><th>Subject</th><th>Preview</th><th>Status</th><th>Date</th></tr></thead>
+      <tbody>${logs.map(l => `
+        <tr>
+          <td>${escapeHtml(l.connection_name||'—')}</td>
+          <td>${escapeHtml(l.subject||'—')}</td>
+          <td style="color:var(--muted);font-size:12.5px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(l.body_preview||'')}</td>
+          <td><span class="badge ${l.status}">${l.status}</span></td>
+          <td style="color:var(--muted);font-size:12.5px;">${new Date(l.created_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'})}</td>
+        </tr>
+      `).join('')}</tbody>
+    </table>`;
+  } catch(e) {
+    wrap.innerHTML = `<div class="empty">Couldn't load history.</div>`;
+  }
+}
+
+// ---------- Init ----------
+checkStatus();
+if (isSignedIn()) { loadConnections(); }
+updateTokenBadge();
+showSignInIfNeeded();
+</script>
+
+</body>
+</html>
