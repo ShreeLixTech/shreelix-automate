@@ -154,17 +154,24 @@
         <input id="conn-name" placeholder="e.g. My Gmail, Team Slack">
 
         <div id="fields-smtp">
-          <label for="smtp-host">SMTP host</label>
-          <input id="smtp-host" placeholder="e.g. smtp.gmail.com">
-          <label for="smtp-port">Port</label>
-          <input id="smtp-port" type="number" value="587" placeholder="587">
-          <label for="smtp-username">Username / email</label>
+          <label for="smtp-provider">Email provider</label>
+          <select id="smtp-provider" onchange="applyProviderPreset()">
+            <option value="gmail">Gmail</option>
+            <option value="outlook">Outlook / Office 365</option>
+            <option value="yahoo">Yahoo Mail</option>
+            <option value="other">Other (I'll enter my own server)</option>
+          </select>
+          <label for="smtp-username">Your email address</label>
           <input id="smtp-username" placeholder="you@example.com">
-          <label for="smtp-password">Password / App Password</label>
-          <input id="smtp-password" type="password" placeholder="App password, not your login password">
-          <div class="hint">For Gmail: create an "App Password" in your Google Account → Security settings. Don't use your normal login password.</div>
-          <label for="smtp-to">Default recipient email</label>
-          <input id="smtp-to" placeholder="recipient@example.com">
+          <label for="smtp-password">App Password</label>
+          <input id="smtp-password" type="password" placeholder="Not your normal login password">
+          <div class="hint">This must be an "App Password", not your regular login password. Search "App Passwords" in your Google/Microsoft/Yahoo account security settings to create one — takes about a minute.</div>
+          <div id="smtp-advanced" style="display:none;">
+            <label for="smtp-host">SMTP server</label>
+            <input id="smtp-host" placeholder="e.g. smtp.example.com" value="smtp.gmail.com">
+            <label for="smtp-port">Port</label>
+            <input id="smtp-port" type="number" value="587" placeholder="587">
+          </div>
         </div>
 
         <div id="fields-webhook" style="display:none;">
@@ -204,7 +211,11 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
     <div class="card" style="max-width:600px;">
       <h3>Compose a message</h3>
       <label for="send-connection">Send via</label>
-      <select id="send-connection"></select>
+      <select id="send-connection" onchange="onSendConnectionChange()"></select>
+      <div id="send-to-wrap">
+        <label for="send-to">To</label>
+        <input id="send-to" placeholder="recipient@example.com">
+      </div>
       <label for="send-subject">Subject <span style="font-weight:400;color:var(--muted);">(used for email/webhook subject field)</span></label>
       <input id="send-subject" placeholder="Write anything — this is completely up to you">
       <label for="send-body">Message</label>
@@ -486,6 +497,25 @@ function openPricing(e){
 }
 
 // ---------- Connection type selector ----------
+const PROVIDER_PRESETS = {
+  gmail: {host: 'smtp.gmail.com', port: 587},
+  outlook: {host: 'smtp.office365.com', port: 587},
+  yahoo: {host: 'smtp.mail.yahoo.com', port: 587},
+  other: null,
+};
+function applyProviderPreset(){
+  const provider = document.getElementById('smtp-provider').value;
+  const advanced = document.getElementById('smtp-advanced');
+  if (provider === 'other') {
+    advanced.style.display = 'block';
+  } else {
+    advanced.style.display = 'none';
+    const preset = PROVIDER_PRESETS[provider];
+    document.getElementById('smtp-host').value = preset.host;
+    document.getElementById('smtp-port').value = preset.port;
+  }
+}
+
 function selectConnType(type){
   document.querySelectorAll('.type-btn').forEach(b => b.classList.toggle('active', b.dataset.type === type));
   document.getElementById('fields-smtp').style.display = type === 'smtp' ? 'block' : 'none';
@@ -530,10 +560,9 @@ document.getElementById('addConnBtn').addEventListener('click', async () => {
       port: parseInt(document.getElementById('smtp-port').value) || 587,
       username: document.getElementById('smtp-username').value.trim(),
       password: document.getElementById('smtp-password').value,
-      to_address: document.getElementById('smtp-to').value.trim(),
     };
-    if (!config.host || !config.username || !config.password || !config.to_address) {
-      toast('Fill in all email fields', true); return;
+    if (!config.host || !config.username || !config.password) {
+      toast('Fill in your email and app password', true); return;
     }
   } else if (type === 'webhook') {
     config = { url: document.getElementById('webhook-url').value.trim() };
@@ -560,11 +589,12 @@ document.getElementById('addConnBtn').addEventListener('click', async () => {
     await api('/connections', {method:'POST', body: JSON.stringify({owner_token: USER_TOKEN, name, conn_type: type, config})});
     toast('Connection saved');
     document.getElementById('conn-name').value = '';
-    ['smtp-host','smtp-port','smtp-username','smtp-password','smtp-to','webhook-url','http-url','http-headers','http-body'].forEach(id => {
+    ['smtp-username','smtp-password','webhook-url','http-url','http-headers','http-body'].forEach(id => {
       const el = document.getElementById(id);
-      if (el && id !== 'smtp-port') el.value = '';
+      if (el) el.value = '';
     });
-    document.getElementById('smtp-port').value = '587';
+    document.getElementById('smtp-provider').value = 'gmail';
+    applyProviderPreset();
     loadConnections();
   } catch(e) {
     toast(e.message, true);
@@ -591,26 +621,39 @@ function populateSendConnectionDropdown(){
     select.innerHTML = `<option value="">No connections yet — add one first</option>`;
     return;
   }
-  select.innerHTML = connections.map(c => `<option value="${c.id}">${escapeHtml(c.name)} (${c.conn_type})</option>`).join('');
+  select.innerHTML = connections.map(c => `<option value="${c.id}" data-type="${c.conn_type}">${escapeHtml(c.name)} (${c.conn_type})</option>`).join('');
+  onSendConnectionChange();
+}
+function onSendConnectionChange(){
+  const select = document.getElementById('send-connection');
+  const opt = select.options[select.selectedIndex];
+  const type = opt ? opt.dataset.type : null;
+  document.getElementById('send-to-wrap').style.display = (type === 'smtp') ? 'block' : 'none';
 }
 
 document.getElementById('sendBtn').addEventListener('click', async () => {
   const connId = document.getElementById('send-connection').value;
+  const select = document.getElementById('send-connection');
+  const opt = select.options[select.selectedIndex];
+  const connType = opt ? opt.dataset.type : null;
+  const toAddress = document.getElementById('send-to').value.trim();
   const subject = document.getElementById('send-subject').value.trim();
   const body = document.getElementById('send-body').value.trim();
   const resultEl = document.getElementById('sendResult');
   resultEl.textContent = '';
 
   if (!connId) { toast('Choose a connection to send through', true); return; }
+  if (connType === 'smtp' && !toAddress) { toast('Enter who to send this email to', true); return; }
   if (!body) { toast('Write a message first', true); return; }
   if (!(await consumeToken())) return;
 
   const btn = document.getElementById('sendBtn');
   btn.disabled = true; btn.textContent = 'Sending…';
   try {
-    await api('/send', {method:'POST', body: JSON.stringify({owner_token: USER_TOKEN, connection_id: parseInt(connId), subject, body})});
+    await api('/send', {method:'POST', body: JSON.stringify({owner_token: USER_TOKEN, connection_id: parseInt(connId), to_address: toAddress || null, subject, body})});
     toast('Message sent');
     resultEl.innerHTML = `<span style="color:var(--green);font-weight:600;">✓ Sent successfully</span>`;
+    document.getElementById('send-to').value = '';
     document.getElementById('send-subject').value = '';
     document.getElementById('send-body').value = '';
   } catch(e) {
