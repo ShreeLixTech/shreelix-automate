@@ -141,6 +141,12 @@ class ConnectionOut(BaseModel):
         from_attributes = True
 
 
+class GmailOAuthCallback(BaseModel):
+    owner_token: str
+    code: str
+    connection_name: str = "My Gmail"
+
+
 class SendMessageRequest(BaseModel):
     owner_token: str
     connection_id: int
@@ -189,6 +195,8 @@ def health():
 # Google Sign-In (same verified pattern as Billing)
 # ---------------------------------------------------------------
 GOOGLE_CLIENT_ID = "121520616317-h33rgmtjgvc1gd2i2dga9i2nnjlmhi9v.apps.googleusercontent.com"
+GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
+GOOGLE_REDIRECT_URI = "https://shreelixtech.github.io/shreelix-automate/automate.html"
 FREE_TOKEN_LIMIT = 100
 
 
@@ -365,7 +373,57 @@ def mask_connection_detail(conn_type: str, config: dict) -> str:
         url = config.get("url", "")
         method = config.get("method", "POST")
         return f"{method} {url[:35]}"
+    if conn_type == "gmail_api":
+        email = config.get("email", "your Gmail account")
+        return f"{email} (Official Gmail API)"
     return "Unknown connection"
+
+
+@app.post("/auth/gmail/callback", response_model=ConnectionOut)
+def gmail_oauth_callback(payload: GmailOAuthCallback, db: Session = Depends(get_db)):
+    """Exchanges the authorization code Google gave us for a refresh token, then saves it as a Connection."""
+    if not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="Gmail connection isn't configured on the server yet")
+
+    token_resp = _requests.post("https://oauth2.googleapis.com/token", data={
+        "code": payload.code,
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "grant_type": "authorization_code",
+    }, timeout=15)
+
+    if not token_resp.ok:
+        raise HTTPException(status_code=502, detail=f"Google rejected the authorization: {token_resp.text[:200]}")
+
+    token_data = token_resp.json()
+    refresh_token = token_data.get("refresh_token")
+    access_token = token_data.get("access_token")
+    if not refresh_token:
+        raise HTTPException(status_code=502, detail="Google didn't provide a refresh token — try disconnecting this app's access in your Google Account and connecting again")
+
+    # Get the actual email address this token belongs to, for display purposes
+    userinfo_resp = _requests.get(
+        "https://www.googleapis.com/oauth2/v2/userinfo",
+        headers={"Authorization": f"Bearer {access_token}"}, timeout=15
+    )
+    email = userinfo_resp.json().get("email", "unknown") if userinfo_resp.ok else "unknown"
+
+    config = {"refresh_token": refresh_token, "email": email}
+    db_conn = Connection(
+        owner_token=payload.owner_token,
+        name=payload.connection_name,
+        conn_type="gmail_api",
+        config=_json.dumps(config),
+    )
+    db.add(db_conn)
+    db.commit()
+    db.refresh(db_conn)
+    return ConnectionOut(
+        id=db_conn.id, name=db_conn.name, conn_type=db_conn.conn_type,
+        masked_detail=mask_connection_detail(db_conn.conn_type, config),
+        created_at=db_conn.created_at,
+    )
 
 
 @app.post("/connections", response_model=ConnectionOut)
@@ -462,6 +520,39 @@ def send_via_http(config: dict, subject: str, body: str):
     resp.raise_for_status()
 
 
+def send_via_gmail_api(config: dict, subject: str, body: str, to_addr: str):
+    import base64
+
+    refresh_token = config["refresh_token"]
+    from_email = config.get("email", "me")
+
+    # Exchange the stored refresh token for a fresh, short-lived access token
+    token_resp = _requests.post("https://oauth2.googleapis.com/token", data={
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "refresh_token": refresh_token,
+        "grant_type": "refresh_token",
+    }, timeout=15)
+    if not token_resp.ok:
+        raise RuntimeError(f"Couldn't refresh Gmail access — you may need to reconnect this Gmail account: {token_resp.text[:150]}")
+    access_token = token_resp.json()["access_token"]
+
+    msg = MIMEText(body)
+    msg["Subject"] = subject or "(no subject)"
+    msg["From"] = from_email
+    msg["To"] = to_addr
+    raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+
+    send_resp = _requests.post(
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+        json={"raw": raw_message},
+        timeout=15,
+    )
+    if not send_resp.ok:
+        raise RuntimeError(f"Gmail API rejected the send: {send_resp.text[:200]}")
+
+
 @app.post("/send", response_model=MessageLogOut)
 def send_message(payload: SendMessageRequest, db: Session = Depends(get_db)):
     conn = db.query(Connection).filter(
@@ -478,6 +569,10 @@ def send_message(payload: SendMessageRequest, db: Session = Depends(get_db)):
             if not payload.to_address:
                 raise ValueError("An email address to send to is required")
             send_via_smtp(config, payload.subject or "", payload.body, payload.to_address)
+        elif conn.conn_type == "gmail_api":
+            if not payload.to_address:
+                raise ValueError("An email address to send to is required")
+            send_via_gmail_api(config, payload.subject or "", payload.body, payload.to_address)
         elif conn.conn_type == "webhook":
             send_via_webhook(config, payload.subject or "", payload.body)
         elif conn.conn_type == "http":
