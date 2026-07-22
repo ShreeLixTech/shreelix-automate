@@ -82,6 +82,7 @@
   .conn-type-badge.webhook{background:#F3E8FF;color:#7E22CE;}
   .conn-type-badge.http{background:#FFF3E0;color:#B8720C;}
   .conn-type-badge.gmail_api{background:var(--green-bg);color:var(--green);}
+  .conn-type-badge.google_bulk{background:#F3E8FF;color:#7E22CE;}
 
   .conn-row{display:flex;justify-content:space-between;align-items:center;padding:14px;border:1px solid var(--border);border-radius:10px;margin-bottom:10px;}
   .conn-row .cname{font-weight:600;font-size:14px;color:var(--navy);}
@@ -137,6 +138,7 @@
   <div class="tabs">
     <div class="tab active" data-tab="connections">Connections</div>
     <div class="tab" data-tab="compose">Compose & Send</div>
+    <div class="tab" data-tab="bulk">Bulk Merge</div>
     <div class="tab" data-tab="history">History</div>
   </div>
 
@@ -238,6 +240,39 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
       <textarea id="send-body" placeholder="Write your message here. Use {{name}}, {{date}}, or any placeholder you want to fill in manually before sending."></textarea>
       <button class="btn" id="sendBtn">Send now</button>
       <div id="sendResult" style="margin-top:14px;font-size:13.5px;"></div>
+    </div>
+  </div>
+
+  <!-- BULK MERGE -->
+  <div class="panel" id="panel-bulk">
+    <div class="grid2">
+      <div class="card">
+        <h3>Connect for Bulk Merge</h3>
+        <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">Needs separate, broader permission (Sheets, Drive) beyond your regular Gmail connection — this reads your spreadsheets to personalize each message.</p>
+        <label for="bulk-conn-name">Connection name</label>
+        <input id="bulk-conn-name" value="My Google (Bulk Merge)">
+        <button class="btn" onclick="startBulkGoogleConnect()">🔗 Connect Google for Bulk Merge</button>
+        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+          <label for="bulk-connection-select">Use this connection</label>
+          <select id="bulk-connection-select"></select>
+        </div>
+      </div>
+      <div class="card">
+        <h3>Send to everyone in a Sheet</h3>
+        <label for="bulk-sheet-url">Google Sheet URL or ID</label>
+        <input id="bulk-sheet-url" placeholder="https://docs.google.com/spreadsheets/d/...">
+        <button class="btn secondary" onclick="previewSheet()">Preview columns</button>
+        <div id="bulk-preview" style="margin-top:12px;font-size:13px;color:var(--muted);"></div>
+
+        <label for="bulk-email-column">Which column has the email address?</label>
+        <input id="bulk-email-column" placeholder="e.g. email">
+        <label for="bulk-subject">Subject <span style="font-weight:400;color:var(--muted);">(use {{column_name}} for any column)</span></label>
+        <input id="bulk-subject" placeholder="e.g. Hi {{name}}, your update">
+        <label for="bulk-body">Message</label>
+        <textarea id="bulk-body" placeholder="Hi {{name}}, ... use any {{column_name}} from your sheet"></textarea>
+        <button class="btn" id="bulkSendBtn" onclick="runBulkSend()">Send to all rows</button>
+        <div id="bulk-result" style="margin-top:14px;font-size:13.5px;"></div>
+      </div>
     </div>
   </div>
 
@@ -387,6 +422,7 @@ document.querySelectorAll('.tab').forEach(tab => {
     document.getElementById('panel-'+tab.dataset.tab).classList.add('active');
     if (tab.dataset.tab === 'compose') populateSendConnectionDropdown();
     if (tab.dataset.tab === 'history') loadHistory();
+    if (tab.dataset.tab === 'bulk') populateBulkConnectionDropdown();
   });
 });
 
@@ -553,7 +589,28 @@ function startGmailConnect(){
     scope: 'https://www.googleapis.com/auth/gmail.send',
     access_type: 'offline',
     prompt: 'consent',
-    state: USER_TOKEN,
+    state: USER_TOKEN + '|gmail',
+  });
+  window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+}
+
+function startBulkGoogleConnect(){
+  if (!isSignedIn()) { toast('Please sign in first', true); return; }
+  const name = document.getElementById('bulk-conn-name').value.trim() || 'My Google (Bulk Merge)';
+  sessionStorage.setItem('shreelix_pending_gmail_conn_name', name);
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_REDIRECT_URI,
+    response_type: 'code',
+    scope: [
+      'https://www.googleapis.com/auth/gmail.send',
+      'https://www.googleapis.com/auth/spreadsheets.readonly',
+      'https://www.googleapis.com/auth/presentations',
+      'https://www.googleapis.com/auth/drive',
+    ].join(' '),
+    access_type: 'offline',
+    prompt: 'consent',
+    state: USER_TOKEN + '|bulk',
   });
   window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
 }
@@ -567,17 +624,20 @@ async function handleGmailOAuthRedirect(){
   // Clean the URL immediately so refreshing doesn't re-trigger this
   window.history.replaceState({}, document.title, window.location.pathname);
 
-  const ownerToken = state || USER_TOKEN;
-  if (!ownerToken) { toast('Sign-in expired — please sign in and try connecting Gmail again', true); return; }
+  const [stateToken, flow] = (state || '').split('|');
+  const ownerToken = stateToken || USER_TOKEN;
+  if (!ownerToken) { toast('Sign-in expired — please sign in and try connecting again', true); return; }
 
-  const connName = sessionStorage.getItem('shreelix_pending_gmail_conn_name') || 'My Gmail';
-  toast('Connecting your Gmail…');
+  const connName = sessionStorage.getItem('shreelix_pending_gmail_conn_name') || 'My Google';
+  const endpoint = flow === 'bulk' ? '/auth/google-bulk/callback' : '/auth/gmail/callback';
+  toast('Connecting your Google account…');
   try {
-    await api('/auth/gmail/callback', {method:'POST', body: JSON.stringify({owner_token: ownerToken, code, connection_name: connName})});
-    toast('Gmail connected successfully');
+    await api(endpoint, {method:'POST', body: JSON.stringify({owner_token: ownerToken, code, connection_name: connName})});
+    toast('Connected successfully');
     loadConnections();
+    populateBulkConnectionDropdown();
   } catch(e) {
-    toast('Gmail connection failed: ' + e.message, true);
+    toast('Connection failed: ' + e.message, true);
   }
 }
 
@@ -588,6 +648,7 @@ async function loadConnections(){
     connections = await api('/connections?owner_token=' + encodeURIComponent(USER_TOKEN));
     if (connections.length === 0) {
       wrap.innerHTML = `<div class="empty"><div class="big">🔌</div>No connections yet — add one on the left.</div>`;
+      populateBulkConnectionDropdown();
       return;
     }
     wrap.innerHTML = connections.map(c => `
@@ -600,8 +661,75 @@ async function loadConnections(){
         <button class="btn small danger" onclick="deleteConnection(${c.id}, '${escapeHtml(c.name).replace(/'/g,"\\'")}')">Delete</button>
       </div>
     `).join('');
+    populateBulkConnectionDropdown();
   } catch(e) {
     wrap.innerHTML = `<div class="empty">Couldn't load connections — the API may still be waking up.</div>`;
+  }
+}
+
+// ---------- Bulk Merge ----------
+function populateBulkConnectionDropdown(){
+  const select = document.getElementById('bulk-connection-select');
+  if (!select) return;
+  const bulkConns = connections.filter(c => c.conn_type === 'google_bulk');
+  if (bulkConns.length === 0) {
+    select.innerHTML = `<option value="">No bulk connection yet — connect one above</option>`;
+    return;
+  }
+  select.innerHTML = bulkConns.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
+}
+
+async function previewSheet(){
+  const connId = document.getElementById('bulk-connection-select').value;
+  const sheetUrl = document.getElementById('bulk-sheet-url').value.trim();
+  const previewEl = document.getElementById('bulk-preview');
+  if (!connId) { toast('Connect and select a Google account first', true); return; }
+  if (!sheetUrl) { toast('Paste a Google Sheet URL first', true); return; }
+
+  previewEl.textContent = 'Loading columns…';
+  try {
+    const result = await api('/bulk/sheet-rows', {method:'POST', body: JSON.stringify({
+      connection_id: parseInt(connId), owner_token: USER_TOKEN, spreadsheet_id: sheetUrl,
+    })});
+    if (result.headers.length === 0) {
+      previewEl.innerHTML = `<span style="color:var(--red);">Sheet appears empty.</span>`;
+      return;
+    }
+    previewEl.innerHTML = `Found <b>${result.rows.length}</b> rows. Columns: ${result.headers.map(h => `<code>{{${escapeHtml(h)}}}</code>`).join(', ')}`;
+  } catch(e) {
+    previewEl.innerHTML = `<span style="color:var(--red);">${escapeHtml(e.message)}</span>`;
+  }
+}
+
+async function runBulkSend(){
+  const connId = document.getElementById('bulk-connection-select').value;
+  const sheetUrl = document.getElementById('bulk-sheet-url').value.trim();
+  const emailColumn = document.getElementById('bulk-email-column').value.trim();
+  const subjectTemplate = document.getElementById('bulk-subject').value.trim();
+  const bodyTemplate = document.getElementById('bulk-body').value.trim();
+  const resultEl = document.getElementById('bulk-result');
+  resultEl.textContent = '';
+
+  if (!connId) { toast('Connect and select a Google account first', true); return; }
+  if (!sheetUrl || !emailColumn || !bodyTemplate) { toast('Fill in the sheet, email column, and message', true); return; }
+  if (!(await consumeToken())) return;
+
+  if (!confirm('This will send a personalized message to every row in the sheet. Continue?')) return;
+
+  const btn = document.getElementById('bulkSendBtn');
+  btn.disabled = true; btn.textContent = 'Sending to all rows…';
+  try {
+    const result = await api('/bulk/send', {method:'POST', body: JSON.stringify({
+      owner_token: USER_TOKEN, bulk_connection_id: parseInt(connId), spreadsheet_id: sheetUrl,
+      email_column: emailColumn, subject_template: subjectTemplate, body_template: bodyTemplate,
+    })});
+    resultEl.innerHTML = `<span style="color:var(--green);font-weight:600;">✓ Sent: ${result.sent}</span>` +
+      (result.failed > 0 ? ` &nbsp; <span style="color:var(--red);font-weight:600;">✗ Failed: ${result.failed}</span><br><span style="color:var(--muted);">${result.errors.map(escapeHtml).join('<br>')}</span>` : '');
+    toast(`Bulk send complete: ${result.sent} sent`);
+  } catch(e) {
+    resultEl.innerHTML = `<span style="color:var(--red);font-weight:600;">✗ ${escapeHtml(e.message)}</span>`;
+  } finally {
+    btn.disabled = false; btn.textContent = 'Send to all rows';
   }
 }
 
