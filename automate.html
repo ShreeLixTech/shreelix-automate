@@ -282,11 +282,35 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
         <input id="sched-name" placeholder="e.g. Daily sales summary">
         <label for="sched-connection">Send via</label>
         <select id="sched-connection" onchange="onSchedConnectionChange()"></select>
+
+        <div id="sched-mode-wrap" style="display:none;">
+          <label for="sched-mode">Who does this go to?</label>
+          <select id="sched-mode" onchange="onSchedModeChange()">
+            <option value="single">One fixed recipient</option>
+            <option value="bulk_send">Everyone in a Google Sheet</option>
+            <option value="bulk_document">Everyone in a Google Sheet + attach a personalized document</option>
+          </select>
+        </div>
+
         <div id="sched-to-wrap">
           <label for="sched-to">To</label>
           <input id="sched-to" placeholder="recipient@example.com">
         </div>
-        <label for="sched-subject">Subject</label>
+
+        <div id="sched-bulk-wrap" style="display:none;">
+          <label for="sched-sheet-url">Google Sheet URL or ID</label>
+          <input id="sched-sheet-url" placeholder="https://docs.google.com/spreadsheets/d/...">
+          <label for="sched-email-column">Which column has the email address?</label>
+          <input id="sched-email-column" placeholder="e.g. email">
+          <div id="sched-slides-wrap" style="display:none;">
+            <label for="sched-slides-template">Google Slides template URL or ID</label>
+            <input id="sched-slides-template" placeholder="https://docs.google.com/presentations/d/...">
+            <label for="sched-pdf-filename">PDF filename</label>
+            <input id="sched-pdf-filename" placeholder="e.g. Certificate-{{name}}.pdf" value="Document-{{name}}.pdf">
+          </div>
+        </div>
+
+        <label for="sched-subject">Subject <span style="font-weight:400;color:var(--muted);">(use {{column_name}} for bulk modes)</span></label>
         <input id="sched-subject" placeholder="Write anything">
         <label for="sched-body">Message</label>
         <textarea id="sched-body" placeholder="Your message"></textarea>
@@ -306,11 +330,6 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
       <div class="card">
         <h3>Your schedules</h3>
         <div id="schedulesWrap"><div class="empty">Loading…</div></div>
-        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);font-size:12.5px;color:var(--muted);">
-          <b>One-time setup needed:</b> schedules only run when something "wakes up" the server periodically. Go to <a href="https://cron-job.org" target="_blank" style="color:var(--blue-deep);">cron-job.org</a> (free, no cost) → create a free account → set up a job that sends a GET or POST request to:
-          <div style="background:var(--bg);padding:8px 10px;border-radius:6px;margin:8px 0;font-family:monospace;font-size:11.5px;word-break:break-all;">https://shreelix-automate-api.onrender.com/schedules/run-due</div>
-          every 5 minutes. This single setup covers all your schedules going forward.
-        </div>
       </div>
     </div>
   </div>
@@ -894,7 +913,22 @@ function onSchedConnectionChange(){
   const select = document.getElementById('sched-connection');
   const opt = select.options[select.selectedIndex];
   const type = opt ? opt.dataset.type : null;
-  document.getElementById('sched-to-wrap').style.display = (type === 'smtp' || type === 'gmail_api') ? 'block' : 'none';
+
+  const modeWrap = document.getElementById('sched-mode-wrap');
+  if (type === 'google_bulk') {
+    modeWrap.style.display = 'block';
+    onSchedModeChange();
+  } else {
+    modeWrap.style.display = 'none';
+    document.getElementById('sched-bulk-wrap').style.display = 'none';
+    document.getElementById('sched-to-wrap').style.display = (type === 'smtp' || type === 'gmail_api') ? 'block' : 'none';
+  }
+}
+function onSchedModeChange(){
+  const mode = document.getElementById('sched-mode').value;
+  document.getElementById('sched-to-wrap').style.display = (mode === 'single') ? 'block' : 'none';
+  document.getElementById('sched-bulk-wrap').style.display = (mode === 'single') ? 'none' : 'block';
+  document.getElementById('sched-slides-wrap').style.display = (mode === 'bulk_document') ? 'block' : 'none';
 }
 function onSchedFrequencyChange(){
   const freq = document.getElementById('sched-frequency').value;
@@ -906,6 +940,7 @@ async function createSchedule(){
   const select = document.getElementById('sched-connection');
   const opt = select.options[select.selectedIndex];
   const connType = opt ? opt.dataset.type : null;
+  const mode = connType === 'google_bulk' ? document.getElementById('sched-mode').value : 'single';
   const name = document.getElementById('sched-name').value.trim();
   const toAddress = document.getElementById('sched-to').value.trim();
   const subject = document.getElementById('sched-subject').value.trim();
@@ -914,9 +949,16 @@ async function createSchedule(){
   const scheduledDate = document.getElementById('sched-date').value;
   const scheduledTime = document.getElementById('sched-time').value;
 
+  const sheetUrl = document.getElementById('sched-sheet-url').value.trim();
+  const emailColumn = document.getElementById('sched-email-column').value.trim();
+  const slidesTemplate = document.getElementById('sched-slides-template').value.trim();
+  const pdfFilename = document.getElementById('sched-pdf-filename').value.trim();
+
   if (!connId) { toast('Choose a connection first', true); return; }
   if (!name) { toast('Give this schedule a name', true); return; }
-  if ((connType === 'smtp' || connType === 'gmail_api') && !toAddress) { toast('Enter who to send this to', true); return; }
+  if (mode === 'single' && (connType === 'smtp' || connType === 'gmail_api') && !toAddress) { toast('Enter who to send this to', true); return; }
+  if (mode !== 'single' && (!sheetUrl || !emailColumn)) { toast('Fill in the Sheet URL and email column', true); return; }
+  if (mode === 'bulk_document' && !slidesTemplate) { toast('Paste your Slides template URL', true); return; }
   if (!body) { toast('Write a message', true); return; }
   if (frequency === 'once' && !scheduledDate) { toast('Pick a date for a one-time schedule', true); return; }
   if (!scheduledTime) { toast('Pick a time', true); return; }
@@ -927,15 +969,23 @@ async function createSchedule(){
   btn.disabled = true; btn.textContent = 'Creating…';
   try {
     await api('/schedules', {method:'POST', body: JSON.stringify({
-      owner_token: USER_TOKEN, connection_id: parseInt(connId), name,
-      to_address: toAddress || null, subject: subject || null, body,
+      owner_token: USER_TOKEN, connection_id: parseInt(connId), name, mode,
+      to_address: mode === 'single' ? (toAddress || null) : null,
+      subject: subject || null, body,
       frequency, scheduled_time: scheduledTime, scheduled_date: frequency === 'once' ? scheduledDate : null,
+      spreadsheet_id: mode !== 'single' ? sheetUrl : null,
+      email_column: mode !== 'single' ? emailColumn : null,
+      slides_template_id: mode === 'bulk_document' ? slidesTemplate : null,
+      pdf_filename_template: mode === 'bulk_document' ? (pdfFilename || 'Document-{{name}}.pdf') : null,
     })});
     toast('Schedule created');
     document.getElementById('sched-name').value = '';
     document.getElementById('sched-to').value = '';
     document.getElementById('sched-subject').value = '';
     document.getElementById('sched-body').value = '';
+    document.getElementById('sched-sheet-url').value = '';
+    document.getElementById('sched-email-column').value = '';
+    document.getElementById('sched-slides-template').value = '';
     loadSchedules();
   } catch(e) {
     toast(e.message, true);
@@ -955,10 +1005,11 @@ async function loadSchedules(){
     wrap.innerHTML = schedules.map(s => {
       const freqLabel = s.frequency === 'daily' ? `Every day at ${s.scheduled_time}` : `Once on ${s.scheduled_date} at ${s.scheduled_time}`;
       const lastRun = s.last_run_at ? new Date(s.last_run_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'}) : 'Never run yet';
+      const modeLabel = s.mode === 'bulk_document' ? '📄 Bulk + document' : s.mode === 'bulk_send' ? '📊 Bulk (Sheet)' : '✉️ Single recipient';
       return `
         <div class="conn-row">
           <div>
-            <div class="cname">${escapeHtml(s.name)}</div>
+            <div class="cname">${escapeHtml(s.name)} <span style="font-size:11px;font-weight:500;color:var(--blue-deep);">${modeLabel}</span></div>
             <div class="cdetail">${freqLabel} · Last run: ${lastRun}</div>
           </div>
           <div style="display:flex;gap:6px;align-items:center;">
