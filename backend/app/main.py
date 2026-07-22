@@ -91,7 +91,8 @@ class Schedule(Base):
     owner_token = Column(String, nullable=False, index=True)
     connection_id = Column(Integer, ForeignKey("connections.id"), nullable=False)
     name = Column(String, nullable=False)
-    to_address = Column(String, nullable=True)  # required for smtp/gmail_api connections
+    mode = Column(String, nullable=False, default="single")  # "single", "bulk_send", "bulk_document"
+    to_address = Column(String, nullable=True)  # used when mode="single" with smtp/gmail_api connections
     subject = Column(String, nullable=True)
     body = Column(String, nullable=False)
     frequency = Column(String, nullable=False, default="daily")  # "daily" or "once"
@@ -100,6 +101,13 @@ class Schedule(Base):
     is_active = Column(String, nullable=False, default="yes")  # "yes"/"no" — pause without deleting
     last_run_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Bulk mode fields — used when mode="bulk_send" or "bulk_document"
+    spreadsheet_id = Column(String, nullable=True)
+    sheet_range = Column(String, nullable=True, default="A1:Z1000")
+    email_column = Column(String, nullable=True)
+    slides_template_id = Column(String, nullable=True)  # used only when mode="bulk_document"
+    pdf_filename_template = Column(String, nullable=True)
 
 
 Base.metadata.create_all(bind=engine)
@@ -203,18 +211,25 @@ class ScheduleCreate(BaseModel):
     owner_token: str
     connection_id: int
     name: str
+    mode: str = "single"  # "single", "bulk_send", "bulk_document"
     to_address: Optional[str] = None
     subject: Optional[str] = None
     body: str
     frequency: str = "daily"  # "daily" or "once"
     scheduled_time: str  # "HH:MM"
     scheduled_date: Optional[str] = None  # "YYYY-MM-DD", required if frequency="once"
+    spreadsheet_id: Optional[str] = None
+    sheet_range: str = "A1:Z1000"
+    email_column: Optional[str] = None
+    slides_template_id: Optional[str] = None
+    pdf_filename_template: Optional[str] = None
 
 
 class ScheduleOut(BaseModel):
     id: int
     connection_id: int
     name: str
+    mode: str
     to_address: Optional[str]
     subject: Optional[str]
     body: str
@@ -224,6 +239,11 @@ class ScheduleOut(BaseModel):
     is_active: str
     last_run_at: Optional[datetime]
     created_at: datetime
+    spreadsheet_id: Optional[str]
+    sheet_range: Optional[str]
+    email_column: Optional[str]
+    slides_template_id: Optional[str]
+    pdf_filename_template: Optional[str]
     class Config:
         from_attributes = True
 
@@ -615,21 +635,19 @@ def get_sheet_rows(payload: SheetRowsRequest, db: Session = Depends(get_db)):
     return {"headers": headers, "rows": rows}
 
 
-@app.post("/bulk/send")
-def bulk_send(payload: BulkSendRequest, db: Session = Depends(get_db)):
-    """Reads every row from a Sheet, fills the message template per row, and sends via Gmail — one send per row."""
-    bulk_conn = db.query(Connection).filter(
-        Connection.id == payload.bulk_connection_id, Connection.owner_token == payload.owner_token
-    ).first()
-    if not bulk_conn or bulk_conn.conn_type != "google_bulk":
-        raise HTTPException(status_code=404, detail="Bulk Google connection not found")
-
+def run_bulk_email_send(db: Session, owner_token: str, bulk_conn: Connection, spreadsheet_id: str,
+                          sheet_range: str, email_column: str, subject_template: str, body_template: str) -> dict:
+    """Core logic: read every row from a Sheet, personalize, send via Gmail. Used by both the
+    immediate 'Send Now' button and scheduled bulk sends — one tested code path for both."""
     bulk_config = _json.loads(bulk_conn.config)
-    access_token = get_fresh_access_token(bulk_config["refresh_token"])
-    sheet_id = extract_spreadsheet_id(payload.spreadsheet_id)
+    try:
+        access_token = get_fresh_access_token(bulk_config["refresh_token"])
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    sheet_id = extract_spreadsheet_id(spreadsheet_id)
 
     resp = _requests.get(
-        f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{payload.sheet_range}",
+        f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{sheet_range}",
         headers={"Authorization": f"Bearer {access_token}"}, timeout=15
     )
     if not resp.ok:
@@ -640,22 +658,21 @@ def bulk_send(payload: BulkSendRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Sheet has no data rows (needs a header row plus at least one data row)")
 
     headers = values[0]
-    if payload.email_column not in headers:
-        raise HTTPException(status_code=400, detail=f"Column '{payload.email_column}' not found in sheet. Found columns: {headers}")
+    if email_column not in headers:
+        raise HTTPException(status_code=400, detail=f"Column '{email_column}' not found in sheet. Found columns: {headers}")
 
     results = {"sent": 0, "failed": 0, "errors": []}
-    from_email = bulk_config.get("email", "me")
 
     for row in values[1:]:
         row_dict = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
-        to_addr = row_dict.get(payload.email_column, "").strip()
+        to_addr = row_dict.get(email_column, "").strip()
         if not to_addr:
             results["failed"] += 1
             results["errors"].append("Skipped a row with no email address")
             continue
 
-        subject = payload.subject_template
-        body = payload.body_template
+        subject = subject_template
+        body = body_template
         for col, val in row_dict.items():
             subject = subject.replace("{{" + col + "}}", str(val))
             body = body.replace("{{" + col + "}}", str(val))
@@ -663,41 +680,50 @@ def bulk_send(payload: BulkSendRequest, db: Session = Depends(get_db)):
         try:
             send_via_gmail_api(bulk_config, subject, body, to_addr)
             results["sent"] += 1
-            log = MessageLog(
-                owner_token=payload.owner_token, connection_id=bulk_conn.id, connection_name=bulk_conn.name,
+            db.add(MessageLog(
+                owner_token=owner_token, connection_id=bulk_conn.id, connection_name=bulk_conn.name,
                 subject=subject, body_preview=(body[:120] + "...") if len(body) > 120 else body, status="sent",
-            )
-            db.add(log)
+            ))
         except Exception as e:
             results["failed"] += 1
             results["errors"].append(f"{to_addr}: {str(e)[:150]}")
-            log = MessageLog(
-                owner_token=payload.owner_token, connection_id=bulk_conn.id, connection_name=bulk_conn.name,
+            db.add(MessageLog(
+                owner_token=owner_token, connection_id=bulk_conn.id, connection_name=bulk_conn.name,
                 subject=subject, body_preview=(body[:120] + "...") if len(body) > 120 else body,
                 status="failed", error=str(e)[:300],
-            )
-            db.add(log)
+            ))
 
     db.commit()
     return results
 
 
-@app.post("/bulk/generate-and-send")
-def bulk_generate_and_send(payload: BulkDocumentSendRequest, db: Session = Depends(get_db)):
-    """For every row in the sheet: duplicate the Slides template, fill in that row's data,
-    export as PDF, email it as an attachment, then clean up the temporary copy."""
+@app.post("/bulk/send")
+def bulk_send(payload: BulkSendRequest, db: Session = Depends(get_db)):
     bulk_conn = db.query(Connection).filter(
         Connection.id == payload.bulk_connection_id, Connection.owner_token == payload.owner_token
     ).first()
     if not bulk_conn or bulk_conn.conn_type != "google_bulk":
         raise HTTPException(status_code=404, detail="Bulk Google connection not found")
+    return run_bulk_email_send(
+        db, payload.owner_token, bulk_conn, payload.spreadsheet_id, payload.sheet_range,
+        payload.email_column, payload.subject_template, payload.body_template,
+    )
 
+
+def run_bulk_document_send(db: Session, owner_token: str, bulk_conn: Connection, spreadsheet_id: str,
+                             sheet_range: str, email_column: str, slides_template_id: str,
+                             pdf_filename_template: str, subject_template: str, body_template: str) -> dict:
+    """Core logic: for every row, duplicate the Slides template, fill it in, export as PDF,
+    email it as an attachment. Used by both the immediate button and scheduled sends."""
     bulk_config = _json.loads(bulk_conn.config)
-    access_token = get_fresh_access_token(bulk_config["refresh_token"])
-    sheet_id = extract_spreadsheet_id(payload.spreadsheet_id)
+    try:
+        access_token = get_fresh_access_token(bulk_config["refresh_token"])
+    except RuntimeError as e:
+        raise HTTPException(status_code=502, detail=str(e))
+    sheet_id = extract_spreadsheet_id(spreadsheet_id)
 
     resp = _requests.get(
-        f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{payload.sheet_range}",
+        f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{sheet_range}",
         headers={"Authorization": f"Bearer {access_token}"}, timeout=15
     )
     if not resp.ok:
@@ -708,22 +734,22 @@ def bulk_generate_and_send(payload: BulkDocumentSendRequest, db: Session = Depen
         raise HTTPException(status_code=400, detail="Sheet has no data rows")
 
     headers = values[0]
-    if payload.email_column not in headers:
-        raise HTTPException(status_code=400, detail=f"Column '{payload.email_column}' not found. Found columns: {headers}")
+    if email_column not in headers:
+        raise HTTPException(status_code=400, detail=f"Column '{email_column}' not found. Found columns: {headers}")
 
     results = {"sent": 0, "failed": 0, "errors": []}
 
     for row in values[1:]:
         row_dict = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
-        to_addr = row_dict.get(payload.email_column, "").strip()
+        to_addr = row_dict.get(email_column, "").strip()
         if not to_addr:
             results["failed"] += 1
             results["errors"].append("Skipped a row with no email address")
             continue
 
-        subject = payload.subject_template
-        body = payload.body_template
-        filename = payload.pdf_filename_template
+        subject = subject_template
+        body = body_template
+        filename = pdf_filename_template
         for col, val in row_dict.items():
             subject = subject.replace("{{" + col + "}}", str(val))
             body = body.replace("{{" + col + "}}", str(val))
@@ -732,9 +758,8 @@ def bulk_generate_and_send(payload: BulkDocumentSendRequest, db: Session = Depen
         copy_id = None
         row_access_token = None
         try:
-            # Fresh access token per row — long bulk jobs can outlast a single token's ~1hr lifetime
             row_access_token = get_fresh_access_token(bulk_config["refresh_token"])
-            slides_id = extract_spreadsheet_id(payload.slides_template_id)
+            slides_id = extract_spreadsheet_id(slides_template_id)
             copy_id = duplicate_slides_template(row_access_token, slides_id, f"temp-{filename}")
             fill_slides_placeholders(row_access_token, copy_id, row_dict)
             pdf_bytes = export_slides_as_pdf(row_access_token, copy_id)
@@ -742,7 +767,7 @@ def bulk_generate_and_send(payload: BulkDocumentSendRequest, db: Session = Depen
 
             results["sent"] += 1
             db.add(MessageLog(
-                owner_token=payload.owner_token, connection_id=bulk_conn.id, connection_name=bulk_conn.name,
+                owner_token=owner_token, connection_id=bulk_conn.id, connection_name=bulk_conn.name,
                 subject=subject, body_preview=f"[PDF attached: {filename}] " + (body[:100] if len(body) > 100 else body),
                 status="sent",
             ))
@@ -750,8 +775,8 @@ def bulk_generate_and_send(payload: BulkDocumentSendRequest, db: Session = Depen
             results["failed"] += 1
             results["errors"].append(f"{to_addr}: {str(e)[:150]}")
             db.add(MessageLog(
-                owner_token=payload.owner_token, connection_id=bulk_conn.id, connection_name=bulk_conn.name,
-                subject=subject, body_preview=f"[PDF generation failed]",
+                owner_token=owner_token, connection_id=bulk_conn.id, connection_name=bulk_conn.name,
+                subject=subject, body_preview="[PDF generation failed]",
                 status="failed", error=str(e)[:300],
             ))
         finally:
@@ -760,6 +785,20 @@ def bulk_generate_and_send(payload: BulkDocumentSendRequest, db: Session = Depen
 
     db.commit()
     return results
+
+
+@app.post("/bulk/generate-and-send")
+def bulk_generate_and_send(payload: BulkDocumentSendRequest, db: Session = Depends(get_db)):
+    bulk_conn = db.query(Connection).filter(
+        Connection.id == payload.bulk_connection_id, Connection.owner_token == payload.owner_token
+    ).first()
+    if not bulk_conn or bulk_conn.conn_type != "google_bulk":
+        raise HTTPException(status_code=404, detail="Bulk Google connection not found")
+    return run_bulk_document_send(
+        db, payload.owner_token, bulk_conn, payload.spreadsheet_id, payload.sheet_range,
+        payload.email_column, payload.slides_template_id, payload.pdf_filename_template,
+        payload.subject_template, payload.body_template,
+    )
 
 
 @app.post("/connections", response_model=ConnectionOut)
@@ -1052,19 +1091,36 @@ def create_schedule(payload: ScheduleCreate, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="frequency must be 'daily' or 'once'")
     if payload.frequency == "once" and not payload.scheduled_date:
         raise HTTPException(status_code=400, detail="scheduled_date is required for a one-time schedule")
-    if conn.conn_type in {"smtp", "gmail_api"} and not payload.to_address:
-        raise HTTPException(status_code=400, detail="An email address to send to is required for this connection type")
+    if payload.mode not in {"single", "bulk_send", "bulk_document"}:
+        raise HTTPException(status_code=400, detail="mode must be 'single', 'bulk_send', or 'bulk_document'")
+
+    if payload.mode == "single":
+        if conn.conn_type in {"smtp", "gmail_api"} and not payload.to_address:
+            raise HTTPException(status_code=400, detail="An email address to send to is required for this connection type")
+    else:
+        if conn.conn_type != "google_bulk":
+            raise HTTPException(status_code=400, detail="Bulk modes require a 'Bulk Merge' connection, not a regular Gmail connection")
+        if not payload.spreadsheet_id or not payload.email_column:
+            raise HTTPException(status_code=400, detail="Sheet URL and email column are required for bulk schedules")
+        if payload.mode == "bulk_document" and not payload.slides_template_id:
+            raise HTTPException(status_code=400, detail="A Slides template is required for document-generation schedules")
 
     db_schedule = Schedule(
         owner_token=payload.owner_token,
         connection_id=payload.connection_id,
         name=payload.name,
+        mode=payload.mode,
         to_address=payload.to_address,
         subject=payload.subject,
         body=payload.body,
         frequency=payload.frequency,
         scheduled_time=payload.scheduled_time,
         scheduled_date=payload.scheduled_date,
+        spreadsheet_id=payload.spreadsheet_id,
+        sheet_range=payload.sheet_range,
+        email_column=payload.email_column,
+        slides_template_id=payload.slides_template_id,
+        pdf_filename_template=payload.pdf_filename_template,
     )
     db.add(db_schedule)
     db.commit()
@@ -1148,25 +1204,42 @@ def run_due_schedules(db: Session = Depends(get_db)):
         conn = db.query(Connection).filter(Connection.id == schedule.connection_id).first()
         if not conn:
             continue
-        config = _json.loads(conn.config)
 
         try:
-            if conn.conn_type == "smtp":
-                send_via_smtp(config, schedule.subject or "", schedule.body, schedule.to_address)
-            elif conn.conn_type == "gmail_api":
-                send_via_gmail_api(config, schedule.subject or "", schedule.body, schedule.to_address)
-            elif conn.conn_type == "webhook":
-                send_via_webhook(config, schedule.subject or "", schedule.body)
-            elif conn.conn_type == "http":
-                send_via_http(config, schedule.subject or "", schedule.body)
+            if schedule.mode == "bulk_send":
+                bulk_result = run_bulk_email_send(
+                    db, schedule.owner_token, conn, schedule.spreadsheet_id, schedule.sheet_range or "A1:Z1000",
+                    schedule.email_column, schedule.subject or "", schedule.body,
+                )
+                results["ran"] += 1
+                results["errors"].extend(bulk_result.get("errors", []))
+            elif schedule.mode == "bulk_document":
+                bulk_result = run_bulk_document_send(
+                    db, schedule.owner_token, conn, schedule.spreadsheet_id, schedule.sheet_range or "A1:Z1000",
+                    schedule.email_column, schedule.slides_template_id, schedule.pdf_filename_template or "Document-{{name}}.pdf",
+                    schedule.subject or "", schedule.body,
+                )
+                results["ran"] += 1
+                results["errors"].extend(bulk_result.get("errors", []))
+            else:
+                config = _json.loads(conn.config)
+                if conn.conn_type == "smtp":
+                    send_via_smtp(config, schedule.subject or "", schedule.body, schedule.to_address)
+                elif conn.conn_type == "gmail_api":
+                    send_via_gmail_api(config, schedule.subject or "", schedule.body, schedule.to_address)
+                elif conn.conn_type == "webhook":
+                    send_via_webhook(config, schedule.subject or "", schedule.body)
+                elif conn.conn_type == "http":
+                    send_via_http(config, schedule.subject or "", schedule.body)
+
+                results["ran"] += 1
+                db.add(MessageLog(
+                    owner_token=schedule.owner_token, connection_id=conn.id, connection_name=conn.name,
+                    subject=schedule.subject, body_preview=(schedule.body[:120] + "...") if len(schedule.body) > 120 else schedule.body,
+                    status="sent",
+                ))
 
             schedule.last_run_at = datetime.utcnow()
-            results["ran"] += 1
-            db.add(MessageLog(
-                owner_token=schedule.owner_token, connection_id=conn.id, connection_name=conn.name,
-                subject=schedule.subject, body_preview=(schedule.body[:120] + "...") if len(schedule.body) > 120 else schedule.body,
-                status="sent",
-            ))
         except Exception as e:
             results["failed"] += 1
             results["errors"].append(f"Schedule '{schedule.name}': {str(e)[:150]}")
@@ -1175,6 +1248,7 @@ def run_due_schedules(db: Session = Depends(get_db)):
                 subject=schedule.subject, body_preview="[Scheduled send failed]",
                 status="failed", error=str(e)[:300],
             ))
+            schedule.last_run_at = datetime.utcnow()  # mark as attempted even on failure, so daily schedules don't retry-storm
 
     db.commit()
     return results
