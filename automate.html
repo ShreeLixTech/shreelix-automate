@@ -141,6 +141,7 @@
     <div class="brand"><span class="mark">S</span> ShreeLix</div>
     <div style="display:flex;align-items:center;gap:18px;">
       <a href="#" onclick="openFaq(event)" style="font-size:13.5px;color:rgba(255,255,255,0.85);font-weight:600;">❓ Help &amp; FAQ</a>
+      <a href="#" onclick="logoutUser(event)" id="logoutLink" style="display:none;font-size:13.5px;color:rgba(255,255,255,0.85);font-weight:600;">🚪 Log out</a>
       <a class="back-link" href="index.html">&larr; Back to website</a>
     </div>
   </div>
@@ -620,6 +621,7 @@ async function handleGoogleCredential(response){
     USER_TOKEN = result.owner_token;
     localStorage.setItem('shreelix_automate_user_token', USER_TOKEN);
     document.getElementById('signInOverlay').classList.remove('force-open');
+    document.getElementById('logoutLink').style.display = 'inline';
 
     if (result.is_new_user) {
       openBusinessSetup();
@@ -657,6 +659,7 @@ async function submitBusinessSetup(){
     cachedTokensUsed = result.user.tokens_used;
     updateTokenBadge();
     document.getElementById('businessSetupOverlay').classList.remove('force-open');
+    document.getElementById('logoutLink').style.display = 'inline';
     loadConnections();
   } catch(e) {
     document.getElementById('regError').textContent = "Couldn't save — please try again.";
@@ -666,12 +669,50 @@ async function submitBusinessSetup(){
 }
 
 function showSignInIfNeeded(){
+  const logoutLink = document.getElementById('logoutLink');
   if (!isSignedIn()) {
+    if (logoutLink) logoutLink.style.display = 'none';
     document.getElementById('signInOverlay').classList.add('force-open');
     initGoogleSignIn();
   } else {
+    if (logoutLink) logoutLink.style.display = 'inline';
     refreshTokenStatus();
   }
+}
+
+function logoutUser(e){
+  if (e) e.preventDefault();
+  if (!confirm('Log out? You\'ll need to sign in with Google again to access your connections, schedules, and history.')) return;
+  performLogout();
+}
+
+function performLogout(message){
+  localStorage.removeItem('shreelix_automate_user_token');
+  USER_TOKEN = null;
+  cachedTokensUsed = 0;
+  connections = [];
+  document.getElementById('logoutLink').style.display = 'none';
+  document.getElementById('connectionsWrap').innerHTML = '';
+  document.getElementById('reg-business').value = '';
+  updateTokenBadge();
+  toast(message || 'Logged out');
+  document.getElementById('signInOverlay').classList.add('force-open');
+  document.getElementById('signInOverlay').querySelector('h3').textContent = 'Welcome to ShreeLix Automate';
+  document.getElementById('signInOverlay').querySelector('p').textContent = 'Sign in with Google — your connections and history stay tied to your account, on any device.';
+  initGoogleSignIn();
+}
+
+// If the backend says our account/token is no longer valid (e.g. account was removed),
+// treat it as an expired session rather than showing a confusing raw error repeatedly.
+function isSessionExpiredError(errorMessage){
+  return errorMessage && errorMessage.includes('User not found');
+}
+function handlePossibleSessionExpiry(errorMessage){
+  if (isSessionExpiredError(errorMessage)) {
+    performLogout('Your session has expired — please sign in again.');
+    return true;
+  }
+  return false;
 }
 
 async function refreshTokenStatus(){
@@ -680,7 +721,9 @@ async function refreshTokenStatus(){
     const user = await api('/users/me?user_token=' + encodeURIComponent(USER_TOKEN));
     cachedTokensUsed = user.tokens_used;
     updateTokenBadge();
-  } catch(e) { /* non-critical */ }
+  } catch(e) {
+    handlePossibleSessionExpiry(e.message);
+  }
 }
 
 function updateTokenBadge(){
@@ -697,6 +740,7 @@ async function consumeToken(){
     updateTokenBadge();
     return true;
   } catch(e) {
+    if (handlePossibleSessionExpiry(e.message)) return false;
     if (e.message && e.message.includes('credits used up')) {
       document.getElementById('paywallOverlay').classList.add('open');
     } else {
