@@ -81,6 +81,7 @@
   .conn-type-badge.smtp{background:#EAF2FF;color:var(--blue-deep);}
   .conn-type-badge.webhook{background:#F3E8FF;color:#7E22CE;}
   .conn-type-badge.http{background:#FFF3E0;color:#B8720C;}
+  .conn-type-badge.gmail_api{background:var(--green-bg);color:var(--green);}
 
   .conn-row{display:flex;justify-content:space-between;align-items:center;padding:14px;border:1px solid var(--border);border-radius:10px;margin-bottom:10px;}
   .conn-row .cname{font-weight:600;font-size:14px;color:var(--navy);}
@@ -146,17 +147,27 @@
         <h3>Add a connection</h3>
         <label>Type</label>
         <div class="type-selector">
-          <div class="type-btn active" data-type="smtp" onclick="selectConnType('smtp')">Email (SMTP)</div>
+          <div class="type-btn active" data-type="gmail_api" onclick="selectConnType('gmail_api')">Gmail</div>
           <div class="type-btn" data-type="webhook" onclick="selectConnType('webhook')">Webhook</div>
           <div class="type-btn" data-type="http" onclick="selectConnType('http')">HTTP API</div>
+          <div class="type-btn" data-type="smtp" onclick="selectConnType('smtp')">Other Email</div>
         </div>
-        <label for="conn-name">Connection name</label>
-        <input id="conn-name" placeholder="e.g. My Gmail, Team Slack">
 
-        <div id="fields-smtp">
+        <div id="fields-gmail_api">
+          <div class="hint" style="margin-top:14px;">Connects directly through Google's official Gmail API — no passwords to enter, works reliably. Recommended.</div>
+          <label for="gmail-conn-name">Connection name</label>
+          <input id="gmail-conn-name" placeholder="e.g. My Gmail" value="My Gmail">
+          <button class="btn" id="connectGmailBtn" onclick="startGmailConnect()">🔗 Connect with Google</button>
+        </div>
+
+        <div id="fields-smtp" style="display:none;">
+          <div style="background:#FFF3E0;border:1px solid #F5D98B;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12.5px;color:#8A6416;">
+            ⚠️ Our current free hosting blocks direct email server connections for Outlook, Yahoo, and other non-Gmail providers. This option is saved for later — please use the <b>Gmail</b> option above, which works today.
+          </div>
+          <label for="conn-name">Connection name</label>
+          <input id="conn-name" placeholder="e.g. Team Outlook">
           <label for="smtp-provider">Email provider</label>
           <select id="smtp-provider" onchange="applyProviderPreset()">
-            <option value="gmail">Gmail</option>
             <option value="outlook">Outlook / Office 365</option>
             <option value="yahoo">Yahoo Mail</option>
             <option value="other">Other (I'll enter my own server)</option>
@@ -165,22 +176,28 @@
           <input id="smtp-username" placeholder="you@example.com">
           <label for="smtp-password">App Password</label>
           <input id="smtp-password" type="password" placeholder="Not your normal login password">
-          <div class="hint">This must be an "App Password", not your regular login password. Search "App Passwords" in your Google/Microsoft/Yahoo account security settings to create one — takes about a minute.</div>
+          <div class="hint">This must be an "App Password", not your regular login password.</div>
           <div id="smtp-advanced" style="display:none;">
             <label for="smtp-host">SMTP server</label>
-            <input id="smtp-host" placeholder="e.g. smtp.example.com" value="smtp.gmail.com">
+            <input id="smtp-host" placeholder="e.g. smtp.example.com">
             <label for="smtp-port">Port</label>
             <input id="smtp-port" type="number" value="587" placeholder="587">
           </div>
+          <button class="btn secondary" id="addConnBtnSmtp">Save connection (may not send successfully yet)</button>
         </div>
 
         <div id="fields-webhook" style="display:none;">
+          <label for="webhook-conn-name">Connection name</label>
+          <input id="webhook-conn-name" placeholder="e.g. Team Slack">
           <label for="webhook-url">Webhook URL</label>
           <input id="webhook-url" placeholder="https://hooks.slack.com/services/...">
           <div class="hint">Works with Slack, Discord, Teams, Zapier, or any service that accepts an incoming webhook.</div>
+          <button class="btn secondary" id="addConnBtnWebhook">Save connection</button>
         </div>
 
         <div id="fields-http" style="display:none;">
+          <label for="http-conn-name">Connection name</label>
+          <input id="http-conn-name" placeholder="e.g. My API">
           <label for="http-method">Method</label>
           <select id="http-method">
             <option value="POST">POST</option>
@@ -195,9 +212,8 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
           <label for="http-body">Body template</label>
           <textarea id="http-body" placeholder='{"message": "{{body}}", "title": "{{subject}}"}'></textarea>
           <div class="hint">Use <code>{{subject}}</code> and <code>{{body}}</code> as placeholders — they'll be filled in when you send.</div>
+          <button class="btn secondary" id="addConnBtnHttp">Save connection</button>
         </div>
-
-        <button class="btn" id="addConnBtn">Save connection</button>
       </div>
       <div class="card">
         <h3>Your connections</h3>
@@ -498,7 +514,6 @@ function openPricing(e){
 
 // ---------- Connection type selector ----------
 const PROVIDER_PRESETS = {
-  gmail: {host: 'smtp.gmail.com', port: 587},
   outlook: {host: 'smtp.office365.com', port: 587},
   yahoo: {host: 'smtp.mail.yahoo.com', port: 587},
   other: null,
@@ -518,9 +533,52 @@ function applyProviderPreset(){
 
 function selectConnType(type){
   document.querySelectorAll('.type-btn').forEach(b => b.classList.toggle('active', b.dataset.type === type));
+  document.getElementById('fields-gmail_api').style.display = type === 'gmail_api' ? 'block' : 'none';
   document.getElementById('fields-smtp').style.display = type === 'smtp' ? 'block' : 'none';
   document.getElementById('fields-webhook').style.display = type === 'webhook' ? 'block' : 'none';
   document.getElementById('fields-http').style.display = type === 'http' ? 'block' : 'none';
+}
+
+// ---------- Gmail OAuth (official API — the recommended, working path) ----------
+const GOOGLE_REDIRECT_URI = "https://shreelixtech.github.io/shreelix-automate/automate.html";
+
+function startGmailConnect(){
+  if (!isSignedIn()) { toast('Please sign in first', true); return; }
+  const name = document.getElementById('gmail-conn-name').value.trim() || 'My Gmail';
+  sessionStorage.setItem('shreelix_pending_gmail_conn_name', name);
+  const params = new URLSearchParams({
+    client_id: GOOGLE_CLIENT_ID,
+    redirect_uri: GOOGLE_REDIRECT_URI,
+    response_type: 'code',
+    scope: 'https://www.googleapis.com/auth/gmail.send',
+    access_type: 'offline',
+    prompt: 'consent',
+    state: USER_TOKEN,
+  });
+  window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+}
+
+async function handleGmailOAuthRedirect(){
+  const params = new URLSearchParams(window.location.search);
+  const code = params.get('code');
+  const state = params.get('state');
+  if (!code) return;
+
+  // Clean the URL immediately so refreshing doesn't re-trigger this
+  window.history.replaceState({}, document.title, window.location.pathname);
+
+  const ownerToken = state || USER_TOKEN;
+  if (!ownerToken) { toast('Sign-in expired — please sign in and try connecting Gmail again', true); return; }
+
+  const connName = sessionStorage.getItem('shreelix_pending_gmail_conn_name') || 'My Gmail';
+  toast('Connecting your Gmail…');
+  try {
+    await api('/auth/gmail/callback', {method:'POST', body: JSON.stringify({owner_token: ownerToken, code, connection_name: connName})});
+    toast('Gmail connected successfully');
+    loadConnections();
+  } catch(e) {
+    toast('Gmail connection failed: ' + e.message, true);
+  }
 }
 
 // ---------- Connections ----------
@@ -535,7 +593,7 @@ async function loadConnections(){
     wrap.innerHTML = connections.map(c => `
       <div class="conn-row">
         <div>
-          <span class="conn-type-badge ${c.conn_type}">${c.conn_type}</span>
+          <span class="conn-type-badge ${c.conn_type}">${c.conn_type === 'gmail_api' ? 'gmail' : c.conn_type}</span>
           <div class="cname" style="margin-top:6px;">${escapeHtml(c.name)}</div>
           <div class="cdetail">${escapeHtml(c.masked_detail)}</div>
         </div>
@@ -547,27 +605,30 @@ async function loadConnections(){
   }
 }
 
-document.getElementById('addConnBtn').addEventListener('click', async () => {
+async function saveConnection(type, btnId){
   if (!(await consumeToken())) return;
-  const type = document.querySelector('.type-btn.active').dataset.type;
-  const name = document.getElementById('conn-name').value.trim();
-  if (!name) { toast('Give this connection a name', true); return; }
 
+  let name = '';
   let config = {};
   if (type === 'smtp') {
+    name = document.getElementById('conn-name').value.trim();
     config = {
       host: document.getElementById('smtp-host').value.trim(),
       port: parseInt(document.getElementById('smtp-port').value) || 587,
       username: document.getElementById('smtp-username').value.trim(),
       password: document.getElementById('smtp-password').value,
     };
+    if (!name) { toast('Give this connection a name', true); return; }
     if (!config.host || !config.username || !config.password) {
       toast('Fill in your email and app password', true); return;
     }
   } else if (type === 'webhook') {
+    name = document.getElementById('webhook-conn-name').value.trim();
     config = { url: document.getElementById('webhook-url').value.trim() };
+    if (!name) { toast('Give this connection a name', true); return; }
     if (!config.url) { toast('Enter a webhook URL', true); return; }
   } else if (type === 'http') {
+    name = document.getElementById('http-conn-name').value.trim();
     const headersRaw = document.getElementById('http-headers').value.trim();
     const headers = {};
     headersRaw.split('\n').forEach(line => {
@@ -580,28 +641,27 @@ document.getElementById('addConnBtn').addEventListener('click', async () => {
       headers,
       body_template: document.getElementById('http-body').value,
     };
+    if (!name) { toast('Give this connection a name', true); return; }
     if (!config.url) { toast('Enter an API URL', true); return; }
   }
 
-  const btn = document.getElementById('addConnBtn');
+  const btn = document.getElementById(btnId);
+  const originalText = btn.textContent;
   btn.disabled = true; btn.textContent = 'Saving…';
   try {
     await api('/connections', {method:'POST', body: JSON.stringify({owner_token: USER_TOKEN, name, conn_type: type, config})});
     toast('Connection saved');
-    document.getElementById('conn-name').value = '';
-    ['smtp-username','smtp-password','webhook-url','http-url','http-headers','http-body'].forEach(id => {
-      const el = document.getElementById(id);
-      if (el) el.value = '';
-    });
-    document.getElementById('smtp-provider').value = 'gmail';
-    applyProviderPreset();
     loadConnections();
   } catch(e) {
     toast(e.message, true);
   } finally {
-    btn.disabled = false; btn.textContent = 'Save connection';
+    btn.disabled = false; btn.textContent = originalText;
   }
-});
+}
+
+document.getElementById('addConnBtnSmtp').addEventListener('click', () => saveConnection('smtp', 'addConnBtnSmtp'));
+document.getElementById('addConnBtnWebhook').addEventListener('click', () => saveConnection('webhook', 'addConnBtnWebhook'));
+document.getElementById('addConnBtnHttp').addEventListener('click', () => saveConnection('http', 'addConnBtnHttp'));
 
 async function deleteConnection(id, name){
   if (!confirm(`Delete "${name}"? This can't be undone.`)) return;
@@ -628,7 +688,7 @@ function onSendConnectionChange(){
   const select = document.getElementById('send-connection');
   const opt = select.options[select.selectedIndex];
   const type = opt ? opt.dataset.type : null;
-  document.getElementById('send-to-wrap').style.display = (type === 'smtp') ? 'block' : 'none';
+  document.getElementById('send-to-wrap').style.display = (type === 'smtp' || type === 'gmail_api') ? 'block' : 'none';
 }
 
 document.getElementById('sendBtn').addEventListener('click', async () => {
@@ -643,7 +703,7 @@ document.getElementById('sendBtn').addEventListener('click', async () => {
   resultEl.textContent = '';
 
   if (!connId) { toast('Choose a connection to send through', true); return; }
-  if (connType === 'smtp' && !toAddress) { toast('Enter who to send this email to', true); return; }
+  if ((connType === 'smtp' || connType === 'gmail_api') && !toAddress) { toast('Enter who to send this email to', true); return; }
   if (!body) { toast('Write a message first', true); return; }
   if (!(await consumeToken())) return;
 
@@ -692,6 +752,7 @@ async function loadHistory(){
 
 // ---------- Init ----------
 checkStatus();
+handleGmailOAuthRedirect();
 if (isSignedIn()) { loadConnections(); }
 updateTokenBadge();
 showSignInIfNeeded();
