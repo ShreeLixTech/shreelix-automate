@@ -54,6 +54,16 @@
     font-family:'Inter',sans-serif;font-size:14px;background:#fff;color:var(--text);
   }
   textarea{resize:vertical;min-height:120px;}
+  .rte-toolbar{display:flex;gap:4px;margin-top:6px;padding:6px;background:var(--bg);border:1px solid var(--border);border-bottom:none;border-radius:8px 8px 0 0;}
+  .rte-btn{background:#fff;border:1px solid var(--border);border-radius:6px;width:30px;height:30px;font-size:13px;cursor:pointer;color:var(--text);display:flex;align-items:center;justify-content:center;transition:all .1s ease;}
+  .rte-btn:hover{background:var(--bg);border-color:#C9D6E5;}
+  .rte-editable{
+    min-height:120px;max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:0 0 8px 8px;
+    padding:12px;font-family:'Inter',sans-serif;font-size:14px;color:var(--text);line-height:1.5;background:#fff;
+  }
+  .rte-editable:focus{outline:2px solid var(--blue);outline-offset:1px;border-color:var(--blue);}
+  .rte-editable:empty:before{content:attr(data-placeholder);color:#94A3B8;}
+  .rte-editable mark{background:#FFF3A0;padding:0 1px;}
   input:focus, select:focus, textarea:focus{outline:2px solid var(--blue);outline-offset:1px;border-color:var(--blue);}
   .hint{font-size:12px;color:var(--muted);margin-top:5px;}
   .faq-item{margin-bottom:18px;padding-bottom:18px;border-bottom:1px solid var(--border);}
@@ -247,7 +257,13 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
       <label for="send-subject">Subject <span style="font-weight:400;color:var(--muted);">(used for email/webhook subject field)</span></label>
       <input id="send-subject" placeholder="Write anything — this is completely up to you">
       <label for="send-body">Message</label>
-      <textarea id="send-body" placeholder="Write your message here. Use {{name}}, {{date}}, or any placeholder you want to fill in manually before sending."></textarea>
+      <div class="rte-toolbar">
+        <button type="button" class="rte-btn" onclick="richExec('send-body','bold')" title="Bold"><b>B</b></button>
+        <button type="button" class="rte-btn" onclick="richExec('send-body','italic')" title="Italic"><i>I</i></button>
+        <button type="button" class="rte-btn" onclick="richExec('send-body','underline')" title="Underline"><u>U</u></button>
+        <button type="button" class="rte-btn" onclick="richExec('send-body','hiliteColor','#FFF3A0')" title="Highlight">🖍️</button>
+      </div>
+      <div id="send-body" class="rte-editable" contenteditable="true" data-placeholder="Write your message here. Use {{name}}, {{date}}, or any placeholder you want to fill in manually before sending."></div>
       <button class="btn" id="sendBtn">Send now</button>
       <div id="sendResult" style="margin-top:14px;font-size:13.5px;"></div>
     </div>
@@ -295,7 +311,13 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
         <label for="bulk-subject">Subject <span style="font-weight:400;color:var(--muted);">(use {{column_name}} for any column)</span></label>
         <input id="bulk-subject" placeholder="e.g. Hi {{name}}, your update">
         <label for="bulk-body">Message</label>
-        <textarea id="bulk-body" placeholder="Hi {{name}}, ... use any {{column_name}} from your sheet"></textarea>
+        <div class="rte-toolbar">
+          <button type="button" class="rte-btn" onclick="richExec('bulk-body','bold')" title="Bold"><b>B</b></button>
+          <button type="button" class="rte-btn" onclick="richExec('bulk-body','italic')" title="Italic"><i>I</i></button>
+          <button type="button" class="rte-btn" onclick="richExec('bulk-body','underline')" title="Underline"><u>U</u></button>
+          <button type="button" class="rte-btn" onclick="richExec('bulk-body','hiliteColor','#FFF3A0')" title="Highlight">🖍️</button>
+        </div>
+        <div id="bulk-body" class="rte-editable" contenteditable="true" data-placeholder="Hi {{name}}, ... use any {{column_name}} from your sheet"></div>
         <button class="btn" id="bulkSendBtn" onclick="runBulkSend()">Send to all rows</button>
         <div id="bulk-result" style="margin-top:14px;font-size:13.5px;"></div>
       </div>
@@ -346,7 +368,13 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
         <label for="sched-subject">Subject <span style="font-weight:400;color:var(--muted);">(use {{column_name}} for bulk modes)</span></label>
         <input id="sched-subject" placeholder="Write anything">
         <label for="sched-body">Message</label>
-        <textarea id="sched-body" placeholder="Your message"></textarea>
+        <div class="rte-toolbar">
+          <button type="button" class="rte-btn" onclick="richExec('sched-body','bold')" title="Bold"><b>B</b></button>
+          <button type="button" class="rte-btn" onclick="richExec('sched-body','italic')" title="Italic"><i>I</i></button>
+          <button type="button" class="rte-btn" onclick="richExec('sched-body','underline')" title="Underline"><u>U</u></button>
+          <button type="button" class="rte-btn" onclick="richExec('sched-body','hiliteColor','#FFF3A0')" title="Highlight">🖍️</button>
+        </div>
+        <div id="sched-body" class="rte-editable" contenteditable="true" data-placeholder="Your message"></div>
         <label for="sched-frequency">Repeat</label>
         <select id="sched-frequency" onchange="onSchedFrequencyChange()">
           <option value="daily">Every day</option>
@@ -824,6 +852,22 @@ async function previewSheet(){
   }
 }
 
+// ---------- Rich text editor (Bold/Italic/Underline/Highlight) ----------
+function richExec(targetId, command, value){
+  const el = document.getElementById(targetId);
+  el.focus();
+  document.execCommand(command, false, value || null);
+}
+function getEditorHtml(id){
+  return document.getElementById(id).innerHTML.trim();
+}
+function getEditorText(id){
+  return document.getElementById(id).innerText.trim();
+}
+function clearEditor(id){
+  document.getElementById(id).innerHTML = '';
+}
+
 function toggleDocFields(){
   const checked = document.getElementById('bulk-attach-doc').checked;
   document.getElementById('bulk-doc-fields').style.display = checked ? 'block' : 'none';
@@ -834,13 +878,13 @@ async function runBulkSend(){
   const sheetUrl = document.getElementById('bulk-sheet-url').value.trim();
   const emailColumn = document.getElementById('bulk-email-column').value.trim();
   const subjectTemplate = document.getElementById('bulk-subject').value.trim();
-  const bodyTemplate = document.getElementById('bulk-body').value.trim();
+  const bodyTemplate = getEditorHtml('bulk-body');
   const attachDoc = document.getElementById('bulk-attach-doc').checked;
   const resultEl = document.getElementById('bulk-result');
   resultEl.textContent = '';
 
   if (!connId) { toast('Connect and select a Google account first', true); return; }
-  if (!sheetUrl || !emailColumn || !bodyTemplate) { toast('Fill in the sheet, email column, and message', true); return; }
+  if (!sheetUrl || !emailColumn || !getEditorText('bulk-body')) { toast('Fill in the sheet, email column, and message', true); return; }
 
   let slidesTemplateId, pdfFilenameTemplate;
   if (attachDoc) {
@@ -953,15 +997,18 @@ document.getElementById('sendBtn').addEventListener('click', async () => {
   const select = document.getElementById('send-connection');
   const opt = select.options[select.selectedIndex];
   const connType = opt ? opt.dataset.type : null;
+  const isEmailType = (connType === 'smtp' || connType === 'gmail_api');
   const toAddress = document.getElementById('send-to').value.trim();
   const subject = document.getElementById('send-subject').value.trim();
-  const body = document.getElementById('send-body').value.trim();
+  // Email connections get real formatting (Bold/Italic/Highlight); Webhook/HTTP get plain text,
+  // since Slack/Discord/etc. would otherwise show literal <b> tags instead of rendering them.
+  const body = isEmailType ? getEditorHtml('send-body') : getEditorText('send-body');
   const resultEl = document.getElementById('sendResult');
   resultEl.textContent = '';
 
   if (!connId) { toast('Choose a connection to send through', true); return; }
-  if ((connType === 'smtp' || connType === 'gmail_api') && !toAddress) { toast('Enter who to send this email to', true); return; }
-  if (!body) { toast('Write a message first', true); return; }
+  if (isEmailType && !toAddress) { toast('Enter who to send this email to', true); return; }
+  if (!getEditorText('send-body')) { toast('Write a message first', true); return; }
   if (!(await consumeToken())) return;
 
   const btn = document.getElementById('sendBtn');
@@ -972,7 +1019,7 @@ document.getElementById('sendBtn').addEventListener('click', async () => {
     resultEl.innerHTML = `<span style="color:var(--green);font-weight:600;">✓ Sent successfully</span>`;
     document.getElementById('send-to').value = '';
     document.getElementById('send-subject').value = '';
-    document.getElementById('send-body').value = '';
+    clearEditor('send-body');
   } catch(e) {
     resultEl.innerHTML = `<span style="color:var(--red);font-weight:600;">✗ ${escapeHtml(e.message)}</span>`;
     toast('Send failed', true);
@@ -1026,7 +1073,7 @@ async function createSchedule(){
   const name = document.getElementById('sched-name').value.trim();
   const toAddress = document.getElementById('sched-to').value.trim();
   const subject = document.getElementById('sched-subject').value.trim();
-  const body = document.getElementById('sched-body').value.trim();
+  const body = getEditorHtml('sched-body');
   const frequency = document.getElementById('sched-frequency').value;
   const scheduledDate = document.getElementById('sched-date').value;
   const scheduledTime = document.getElementById('sched-time').value;
@@ -1041,7 +1088,7 @@ async function createSchedule(){
   if (mode === 'single' && (connType === 'smtp' || connType === 'gmail_api') && !toAddress) { toast('Enter who to send this to', true); return; }
   if (mode !== 'single' && (!sheetUrl || !emailColumn)) { toast('Fill in the Sheet URL and email column', true); return; }
   if (mode === 'bulk_document' && !slidesTemplate) { toast('Paste your Slides template URL', true); return; }
-  if (!body) { toast('Write a message', true); return; }
+  if (!getEditorText('sched-body')) { toast('Write a message', true); return; }
   if (frequency === 'once' && !scheduledDate) { toast('Pick a date for a one-time schedule', true); return; }
   if (!scheduledTime) { toast('Pick a time', true); return; }
 
@@ -1064,7 +1111,7 @@ async function createSchedule(){
     document.getElementById('sched-name').value = '';
     document.getElementById('sched-to').value = '';
     document.getElementById('sched-subject').value = '';
-    document.getElementById('sched-body').value = '';
+    clearEditor('sched-body');
     document.getElementById('sched-sheet-url').value = '';
     document.getElementById('sched-email-column').value = '';
     document.getElementById('sched-slides-template').value = '';
