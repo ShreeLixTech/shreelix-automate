@@ -147,6 +147,29 @@ class GmailOAuthCallback(BaseModel):
     connection_name: str = "My Gmail"
 
 
+class BulkGoogleOAuthCallback(BaseModel):
+    owner_token: str
+    code: str
+    connection_name: str = "My Google (Bulk Merge)"
+
+
+class SheetRowsRequest(BaseModel):
+    connection_id: int
+    owner_token: str
+    spreadsheet_id: str
+    sheet_range: str = "A1:Z1000"
+
+
+class BulkSendRequest(BaseModel):
+    owner_token: str
+    bulk_connection_id: int  # the Google connection with Sheets/Drive access
+    spreadsheet_id: str
+    sheet_range: str = "A1:Z1000"
+    email_column: str  # which column header contains the recipient email
+    subject_template: str
+    body_template: str
+
+
 class SendMessageRequest(BaseModel):
     owner_token: str
     connection_id: int
@@ -376,6 +399,9 @@ def mask_connection_detail(conn_type: str, config: dict) -> str:
     if conn_type == "gmail_api":
         email = config.get("email", "your Gmail account")
         return f"{email} (Official Gmail API)"
+    if conn_type == "google_bulk":
+        email = config.get("email", "your Google account")
+        return f"{email} (Sheets + Slides + Drive)"
     return "Unknown connection"
 
 
@@ -424,6 +450,173 @@ def gmail_oauth_callback(payload: GmailOAuthCallback, db: Session = Depends(get_
         masked_detail=mask_connection_detail(db_conn.conn_type, config),
         created_at=db_conn.created_at,
     )
+
+
+def get_fresh_access_token(refresh_token: str) -> str:
+    """Exchanges a stored refresh token for a short-lived access token — used before any Google API call."""
+    token_resp = _requests.post("https://oauth2.googleapis.com/token", data={
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "refresh_token": refresh_token,
+        "grant_type": "refresh_token",
+    }, timeout=15)
+    if not token_resp.ok:
+        raise RuntimeError(f"Couldn't refresh Google access — you may need to reconnect: {token_resp.text[:150]}")
+    return token_resp.json()["access_token"]
+
+
+@app.post("/auth/google-bulk/callback", response_model=ConnectionOut)
+def google_bulk_oauth_callback(payload: BulkGoogleOAuthCallback, db: Session = Depends(get_db)):
+    """Same OAuth exchange as Gmail, but for the broader Sheets/Slides/Drive scopes used for bulk merge."""
+    if not GOOGLE_CLIENT_SECRET:
+        raise HTTPException(status_code=503, detail="This isn't configured on the server yet")
+
+    token_resp = _requests.post("https://oauth2.googleapis.com/token", data={
+        "code": payload.code,
+        "client_id": GOOGLE_CLIENT_ID,
+        "client_secret": GOOGLE_CLIENT_SECRET,
+        "redirect_uri": GOOGLE_REDIRECT_URI,
+        "grant_type": "authorization_code",
+    }, timeout=15)
+
+    if not token_resp.ok:
+        raise HTTPException(status_code=502, detail=f"Google rejected the authorization: {token_resp.text[:200]}")
+
+    token_data = token_resp.json()
+    refresh_token = token_data.get("refresh_token")
+    access_token = token_data.get("access_token")
+    if not refresh_token:
+        raise HTTPException(status_code=502, detail="Google didn't provide a refresh token — try disconnecting this app's access in your Google Account and connecting again")
+
+    userinfo_resp = _requests.get(
+        "https://www.googleapis.com/oauth2/v2/userinfo",
+        headers={"Authorization": f"Bearer {access_token}"}, timeout=15
+    )
+    email = userinfo_resp.json().get("email", "unknown") if userinfo_resp.ok else "unknown"
+
+    config = {"refresh_token": refresh_token, "email": email}
+    db_conn = Connection(
+        owner_token=payload.owner_token,
+        name=payload.connection_name,
+        conn_type="google_bulk",
+        config=_json.dumps(config),
+    )
+    db.add(db_conn)
+    db.commit()
+    db.refresh(db_conn)
+    return ConnectionOut(
+        id=db_conn.id, name=db_conn.name, conn_type=db_conn.conn_type,
+        masked_detail=mask_connection_detail(db_conn.conn_type, config),
+        created_at=db_conn.created_at,
+    )
+
+
+def extract_spreadsheet_id(input_str: str) -> str:
+    """Accepts either a raw Sheet ID or a full Google Sheets URL and returns just the ID."""
+    if "/d/" in input_str:
+        return input_str.split("/d/")[1].split("/")[0]
+    return input_str.strip()
+
+
+@app.post("/bulk/sheet-rows")
+def get_sheet_rows(payload: SheetRowsRequest, db: Session = Depends(get_db)):
+    """Reads a Google Sheet and returns rows as a list of {column_name: value} dicts, using the first row as headers."""
+    conn = db.query(Connection).filter(
+        Connection.id == payload.connection_id, Connection.owner_token == payload.owner_token
+    ).first()
+    if not conn or conn.conn_type != "google_bulk":
+        raise HTTPException(status_code=404, detail="Bulk Google connection not found")
+
+    config = _json.loads(conn.config)
+    access_token = get_fresh_access_token(config["refresh_token"])
+    sheet_id = extract_spreadsheet_id(payload.spreadsheet_id)
+
+    resp = _requests.get(
+        f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{payload.sheet_range}",
+        headers={"Authorization": f"Bearer {access_token}"}, timeout=15
+    )
+    if not resp.ok:
+        raise HTTPException(status_code=502, detail=f"Couldn't read the sheet: {resp.text[:200]}")
+
+    values = resp.json().get("values", [])
+    if not values:
+        return {"headers": [], "rows": []}
+
+    headers = values[0]
+    rows = []
+    for row in values[1:]:
+        row_dict = {}
+        for i, header in enumerate(headers):
+            row_dict[header] = row[i] if i < len(row) else ""
+        rows.append(row_dict)
+    return {"headers": headers, "rows": rows}
+
+
+@app.post("/bulk/send")
+def bulk_send(payload: BulkSendRequest, db: Session = Depends(get_db)):
+    """Reads every row from a Sheet, fills the message template per row, and sends via Gmail — one send per row."""
+    bulk_conn = db.query(Connection).filter(
+        Connection.id == payload.bulk_connection_id, Connection.owner_token == payload.owner_token
+    ).first()
+    if not bulk_conn or bulk_conn.conn_type != "google_bulk":
+        raise HTTPException(status_code=404, detail="Bulk Google connection not found")
+
+    bulk_config = _json.loads(bulk_conn.config)
+    access_token = get_fresh_access_token(bulk_config["refresh_token"])
+    sheet_id = extract_spreadsheet_id(payload.spreadsheet_id)
+
+    resp = _requests.get(
+        f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{payload.sheet_range}",
+        headers={"Authorization": f"Bearer {access_token}"}, timeout=15
+    )
+    if not resp.ok:
+        raise HTTPException(status_code=502, detail=f"Couldn't read the sheet: {resp.text[:200]}")
+
+    values = resp.json().get("values", [])
+    if len(values) < 2:
+        raise HTTPException(status_code=400, detail="Sheet has no data rows (needs a header row plus at least one data row)")
+
+    headers = values[0]
+    if payload.email_column not in headers:
+        raise HTTPException(status_code=400, detail=f"Column '{payload.email_column}' not found in sheet. Found columns: {headers}")
+
+    results = {"sent": 0, "failed": 0, "errors": []}
+    from_email = bulk_config.get("email", "me")
+
+    for row in values[1:]:
+        row_dict = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
+        to_addr = row_dict.get(payload.email_column, "").strip()
+        if not to_addr:
+            results["failed"] += 1
+            results["errors"].append("Skipped a row with no email address")
+            continue
+
+        subject = payload.subject_template
+        body = payload.body_template
+        for col, val in row_dict.items():
+            subject = subject.replace("{{" + col + "}}", str(val))
+            body = body.replace("{{" + col + "}}", str(val))
+
+        try:
+            send_via_gmail_api(bulk_config, subject, body, to_addr)
+            results["sent"] += 1
+            log = MessageLog(
+                owner_token=payload.owner_token, connection_id=bulk_conn.id, connection_name=bulk_conn.name,
+                subject=subject, body_preview=(body[:120] + "...") if len(body) > 120 else body, status="sent",
+            )
+            db.add(log)
+        except Exception as e:
+            results["failed"] += 1
+            results["errors"].append(f"{to_addr}: {str(e)[:150]}")
+            log = MessageLog(
+                owner_token=payload.owner_token, connection_id=bulk_conn.id, connection_name=bulk_conn.name,
+                subject=subject, body_preview=(body[:120] + "...") if len(body) > 120 else body,
+                status="failed", error=str(e)[:300],
+            )
+            db.add(log)
+
+    db.commit()
+    return results
 
 
 @app.post("/connections", response_model=ConnectionOut)
