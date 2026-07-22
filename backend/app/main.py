@@ -85,6 +85,23 @@ class MessageLog(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class Schedule(Base):
+    __tablename__ = "schedules"
+    id = Column(Integer, primary_key=True, index=True)
+    owner_token = Column(String, nullable=False, index=True)
+    connection_id = Column(Integer, ForeignKey("connections.id"), nullable=False)
+    name = Column(String, nullable=False)
+    to_address = Column(String, nullable=True)  # required for smtp/gmail_api connections
+    subject = Column(String, nullable=True)
+    body = Column(String, nullable=False)
+    frequency = Column(String, nullable=False, default="daily")  # "daily" or "once"
+    scheduled_time = Column(String, nullable=False)  # "HH:MM", 24-hour
+    scheduled_date = Column(String, nullable=True)  # "YYYY-MM-DD", only used when frequency="once"
+    is_active = Column(String, nullable=False, default="yes")  # "yes"/"no" — pause without deleting
+    last_run_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 Base.metadata.create_all(bind=engine)
 
 # ---------------------------------------------------------------
@@ -180,6 +197,40 @@ class BulkDocumentSendRequest(BaseModel):
     pdf_filename_template: str = "Document-{{name}}.pdf"
     subject_template: str
     body_template: str
+
+
+class ScheduleCreate(BaseModel):
+    owner_token: str
+    connection_id: int
+    name: str
+    to_address: Optional[str] = None
+    subject: Optional[str] = None
+    body: str
+    frequency: str = "daily"  # "daily" or "once"
+    scheduled_time: str  # "HH:MM"
+    scheduled_date: Optional[str] = None  # "YYYY-MM-DD", required if frequency="once"
+
+
+class ScheduleOut(BaseModel):
+    id: int
+    connection_id: int
+    name: str
+    to_address: Optional[str]
+    subject: Optional[str]
+    body: str
+    frequency: str
+    scheduled_time: str
+    scheduled_date: Optional[str]
+    is_active: str
+    last_run_at: Optional[datetime]
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+
+class ScheduleToggle(BaseModel):
+    owner_token: str
+    is_active: bool
 
 
 class SendMessageRequest(BaseModel):
@@ -980,3 +1031,150 @@ def send_message(payload: SendMessageRequest, db: Session = Depends(get_db)):
 @app.get("/logs", response_model=list[MessageLogOut])
 def list_message_logs(owner_token: str, db: Session = Depends(get_db)):
     return db.query(MessageLog).filter(MessageLog.owner_token == owner_token).order_by(MessageLog.id.desc()).limit(100).all()
+
+
+# ==================== Scheduling ====================
+IST_OFFSET = timedelta(hours=5, minutes=30)  # India Standard Time — this product's users are India-based
+
+
+def now_ist() -> datetime:
+    return datetime.utcnow() + IST_OFFSET
+
+
+@app.post("/schedules", response_model=ScheduleOut)
+def create_schedule(payload: ScheduleCreate, db: Session = Depends(get_db)):
+    conn = db.query(Connection).filter(
+        Connection.id == payload.connection_id, Connection.owner_token == payload.owner_token
+    ).first()
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    if payload.frequency not in {"daily", "once"}:
+        raise HTTPException(status_code=400, detail="frequency must be 'daily' or 'once'")
+    if payload.frequency == "once" and not payload.scheduled_date:
+        raise HTTPException(status_code=400, detail="scheduled_date is required for a one-time schedule")
+    if conn.conn_type in {"smtp", "gmail_api"} and not payload.to_address:
+        raise HTTPException(status_code=400, detail="An email address to send to is required for this connection type")
+
+    db_schedule = Schedule(
+        owner_token=payload.owner_token,
+        connection_id=payload.connection_id,
+        name=payload.name,
+        to_address=payload.to_address,
+        subject=payload.subject,
+        body=payload.body,
+        frequency=payload.frequency,
+        scheduled_time=payload.scheduled_time,
+        scheduled_date=payload.scheduled_date,
+    )
+    db.add(db_schedule)
+    db.commit()
+    db.refresh(db_schedule)
+    return db_schedule
+
+
+@app.get("/schedules", response_model=list[ScheduleOut])
+def list_schedules(owner_token: str, db: Session = Depends(get_db)):
+    return db.query(Schedule).filter(Schedule.owner_token == owner_token).order_by(Schedule.id.desc()).all()
+
+
+@app.patch("/schedules/{schedule_id}/toggle", response_model=ScheduleOut)
+def toggle_schedule(schedule_id: int, payload: ScheduleToggle, db: Session = Depends(get_db)):
+    schedule = db.query(Schedule).filter(Schedule.id == schedule_id, Schedule.owner_token == payload.owner_token).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    schedule.is_active = "yes" if payload.is_active else "no"
+    db.commit()
+    db.refresh(schedule)
+    return schedule
+
+
+@app.delete("/schedules/{schedule_id}")
+def delete_schedule(schedule_id: int, owner_token: str, db: Session = Depends(get_db)):
+    schedule = db.query(Schedule).filter(Schedule.id == schedule_id, Schedule.owner_token == owner_token).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    db.delete(schedule)
+    db.commit()
+    return {"status": "deleted"}
+
+
+def is_schedule_due(schedule: Schedule, current: datetime) -> bool:
+    """Checks if a schedule should fire right now, in IST. Tolerant of the checker running every
+    few minutes rather than at the exact minute — 'due' means 'we've passed the target time and
+    haven't run yet today' (daily) or 'haven't run at all' (once)."""
+    if schedule.is_active != "yes":
+        return False
+
+    try:
+        target_hour, target_minute = map(int, schedule.scheduled_time.split(":"))
+    except (ValueError, AttributeError):
+        return False
+
+    current_minutes = current.hour * 60 + current.minute
+    target_minutes = target_hour * 60 + target_minute
+    past_target_time = current_minutes >= target_minutes
+
+    if schedule.frequency == "once":
+        if schedule.last_run_at is not None:
+            return False  # already ran once, never again
+        if schedule.scheduled_date != current.strftime("%Y-%m-%d"):
+            return False  # not the right date yet (or already past — we don't retroactively fire missed schedules)
+        return past_target_time
+
+    if schedule.frequency == "daily":
+        if not past_target_time:
+            return False
+        if schedule.last_run_at is not None:
+            last_run_ist = schedule.last_run_at + IST_OFFSET
+            if last_run_ist.strftime("%Y-%m-%d") == current.strftime("%Y-%m-%d"):
+                return False  # already ran today
+        return True
+
+    return False
+
+
+@app.post("/schedules/run-due")
+def run_due_schedules(db: Session = Depends(get_db)):
+    """The endpoint an external free cron pinger hits every few minutes. Checks every active
+    schedule across every user, and runs whichever ones are due right now."""
+    current = now_ist()
+    all_schedules = db.query(Schedule).filter(Schedule.is_active == "yes").all()
+    results = {"checked": len(all_schedules), "ran": 0, "failed": 0, "errors": []}
+
+    for schedule in all_schedules:
+        if not is_schedule_due(schedule, current):
+            continue
+
+        conn = db.query(Connection).filter(Connection.id == schedule.connection_id).first()
+        if not conn:
+            continue
+        config = _json.loads(conn.config)
+
+        try:
+            if conn.conn_type == "smtp":
+                send_via_smtp(config, schedule.subject or "", schedule.body, schedule.to_address)
+            elif conn.conn_type == "gmail_api":
+                send_via_gmail_api(config, schedule.subject or "", schedule.body, schedule.to_address)
+            elif conn.conn_type == "webhook":
+                send_via_webhook(config, schedule.subject or "", schedule.body)
+            elif conn.conn_type == "http":
+                send_via_http(config, schedule.subject or "", schedule.body)
+
+            schedule.last_run_at = datetime.utcnow()
+            results["ran"] += 1
+            db.add(MessageLog(
+                owner_token=schedule.owner_token, connection_id=conn.id, connection_name=conn.name,
+                subject=schedule.subject, body_preview=(schedule.body[:120] + "...") if len(schedule.body) > 120 else schedule.body,
+                status="sent",
+            ))
+        except Exception as e:
+            results["failed"] += 1
+            results["errors"].append(f"Schedule '{schedule.name}': {str(e)[:150]}")
+            db.add(MessageLog(
+                owner_token=schedule.owner_token, connection_id=conn.id, connection_name=conn.name,
+                subject=schedule.subject, body_preview="[Scheduled send failed]",
+                status="failed", error=str(e)[:300],
+            ))
+
+    db.commit()
+    return results
