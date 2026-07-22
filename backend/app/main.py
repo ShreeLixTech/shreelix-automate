@@ -1190,6 +1190,7 @@ def is_schedule_due(schedule: Schedule, current: datetime) -> bool:
 
 
 @app.post("/schedules/run-due")
+@app.get("/schedules/run-due")
 def run_due_schedules(db: Session = Depends(get_db)):
     """The endpoint an external free cron pinger hits every few minutes. Checks every active
     schedule across every user, and runs whichever ones are due right now."""
