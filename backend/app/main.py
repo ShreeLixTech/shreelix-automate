@@ -859,7 +859,7 @@ def send_via_smtp(config: dict, subject: str, body: str, to_addr: str):
     from_addr = config.get("from_address", username)
     use_ssl = config.get("use_ssl", port == 465)
 
-    msg = MIMEText(body)
+    msg = MIMEText(body, "html")
     msg["Subject"] = subject or "(no subject)"
     msg["From"] = from_addr
     msg["To"] = to_addr
@@ -912,7 +912,7 @@ def send_via_gmail_api(config: dict, subject: str, body: str, to_addr: str):
         raise RuntimeError(f"Couldn't refresh Gmail access — you may need to reconnect this Gmail account: {token_resp.text[:150]}")
     access_token = token_resp.json()["access_token"]
 
-    msg = MIMEText(body)
+    msg = MIMEText(body, "html")
     msg["Subject"] = subject or "(no subject)"
     msg["From"] = from_email
     msg["To"] = to_addr
@@ -942,7 +942,7 @@ def send_via_gmail_api_with_attachment(config: dict, subject: str, body: str, to
     msg["Subject"] = subject or "(no subject)"
     msg["From"] = from_email
     msg["To"] = to_addr
-    msg.attach(_MIMEText(body))
+    msg.attach(_MIMEText(body, "html"))
 
     part = MIMEBase("application", "pdf")
     part.set_payload(attachment_bytes)
