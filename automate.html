@@ -102,11 +102,13 @@
   .conn-type-badge.webhook{background:#F3E8FF;color:#7E22CE;}
   .conn-type-badge.http{background:#FFF3E0;color:#B8720C;}
   .conn-type-badge.gmail_api{background:var(--green-bg);color:var(--green);}
+  .conn-type-badge.google{background:var(--green-bg);color:var(--green);}
   .conn-type-badge.google_bulk{background:#F3E8FF;color:#7E22CE;}
 
   .conn-row{display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border:1px solid var(--border);border-left:3px solid var(--border);border-radius:10px;margin-bottom:10px;transition:all .15s ease;}
   .conn-row:hover{border-color:#D5DEE8;border-left-color:var(--blue);box-shadow:0 2px 8px rgba(11,31,58,0.06);transform:translateY(-1px);}
   .conn-row.gmail_api{border-left-color:var(--green);}
+  .conn-row.google{border-left-color:var(--green);}
   .conn-row.google_bulk{border-left-color:#7E22CE;}
   .conn-row.webhook{border-left-color:#7E22CE;}
   .conn-row.http{border-left-color:var(--amber);}
@@ -184,16 +186,16 @@
         <h3>Add a connection</h3>
         <label>Type</label>
         <div class="type-selector">
-          <div class="type-btn active" data-type="gmail_api" onclick="selectConnType('gmail_api')"><span class="ticon">✉️</span>Gmail</div>
+          <div class="type-btn active" data-type="gmail_api" onclick="selectConnType('gmail_api')"><span class="ticon">✉️</span>Google</div>
           <div class="type-btn" data-type="webhook" onclick="selectConnType('webhook')"><span class="ticon">🔗</span>Webhook</div>
           <div class="type-btn" data-type="http" onclick="selectConnType('http')"><span class="ticon">⚡</span>HTTP API</div>
           <div class="type-btn" data-type="smtp" onclick="selectConnType('smtp')"><span class="ticon">📮</span>Other Email</div>
         </div>
 
         <div id="fields-gmail_api">
-          <div class="hint" style="margin-top:14px;">Connects directly through Google's official Gmail API — no passwords to enter, works reliably. Recommended.</div>
+          <div class="hint" style="margin-top:14px;">One connection handles everything — sending individual emails, bulk sends from a Google Sheet, and personalized document generation from Slides. No passwords to enter, works reliably.</div>
           <label for="gmail-conn-name">Connection name</label>
-          <input id="gmail-conn-name" placeholder="e.g. My Gmail" value="My Gmail">
+          <input id="gmail-conn-name" placeholder="e.g. My Google Account" value="My Google Account">
           <button class="btn" id="connectGmailBtn" onclick="startGmailConnect()">🔗 Connect with Google</button>
         </div>
 
@@ -272,18 +274,15 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
   <!-- BULK MERGE -->
   <div class="panel" id="panel-bulk">
     <div class="step-guide">
-      <b>Sending to many people at once?</b> First connect Google here (separate from your regular Gmail connection — this one also reads Sheets and Slides). Then paste a Sheet link, preview its columns, and write your message using <code>{{column_name}}</code> for anything that should change per person.
+      <b>Sending to many people at once?</b> Use the same Google connection from the Connections tab — it already has everything needed. Paste a Sheet link below, preview its columns, and write your message using <code>{{column_name}}</code> for anything that should change per person.
     </div>
     <div class="grid2">
       <div class="card">
-        <h3>Connect for Bulk Merge</h3>
-        <p style="font-size:13px;color:var(--muted);margin-bottom:14px;">Needs separate, broader permission (Sheets, Drive) beyond your regular Gmail connection — this reads your spreadsheets to personalize each message.</p>
-        <label for="bulk-conn-name">Connection name</label>
-        <input id="bulk-conn-name" value="My Google (Bulk Merge)">
-        <button class="btn" onclick="startBulkGoogleConnect()">🔗 Connect Google for Bulk Merge</button>
-        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
-          <label for="bulk-connection-select">Use this connection</label>
-          <select id="bulk-connection-select"></select>
+        <h3>Choose your connection</h3>
+        <label for="bulk-connection-select">Google connection</label>
+        <select id="bulk-connection-select"></select>
+        <div id="bulk-no-conn-hint" style="display:none;margin-top:14px;padding:12px 14px;background:#FFF3E0;border:1px solid #F5D98B;border-radius:8px;font-size:12.5px;color:#8A6416;">
+          No Google connection yet — go to the <b>Connections</b> tab and click "Connect with Google" first.
         </div>
       </div>
       <div class="card">
@@ -730,23 +729,7 @@ const GOOGLE_REDIRECT_URI = "https://shreelixtech.github.io/shreelix-automate/au
 
 function startGmailConnect(){
   if (!isSignedIn()) { toast('Please sign in first', true); return; }
-  const name = document.getElementById('gmail-conn-name').value.trim() || 'My Gmail';
-  sessionStorage.setItem('shreelix_pending_gmail_conn_name', name);
-  const params = new URLSearchParams({
-    client_id: GOOGLE_CLIENT_ID,
-    redirect_uri: GOOGLE_REDIRECT_URI,
-    response_type: 'code',
-    scope: 'https://www.googleapis.com/auth/gmail.send email profile',
-    access_type: 'offline',
-    prompt: 'consent',
-    state: USER_TOKEN + '|gmail',
-  });
-  window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
-}
-
-function startBulkGoogleConnect(){
-  if (!isSignedIn()) { toast('Please sign in first', true); return; }
-  const name = document.getElementById('bulk-conn-name').value.trim() || 'My Google (Bulk Merge)';
+  const name = document.getElementById('gmail-conn-name').value.trim() || 'My Google Account';
   sessionStorage.setItem('shreelix_pending_gmail_conn_name', name);
   const params = new URLSearchParams({
     client_id: GOOGLE_CLIENT_ID,
@@ -765,6 +748,8 @@ function startBulkGoogleConnect(){
   });
   window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
 }
+
+
 
 async function handleGmailOAuthRedirect(){
   const params = new URLSearchParams(window.location.search);
@@ -821,12 +806,15 @@ async function loadConnections(){
 // ---------- Bulk Merge ----------
 function populateBulkConnectionDropdown(){
   const select = document.getElementById('bulk-connection-select');
+  const hint = document.getElementById('bulk-no-conn-hint');
   if (!select) return;
-  const bulkConns = connections.filter(c => c.conn_type === 'google_bulk');
+  const bulkConns = connections.filter(c => ['google', 'google_bulk', 'gmail_api'].includes(c.conn_type));
   if (bulkConns.length === 0) {
-    select.innerHTML = `<option value="">No bulk connection yet — connect one above</option>`;
+    select.innerHTML = `<option value="">No Google connection yet</option>`;
+    if (hint) hint.style.display = 'block';
     return;
   }
+  if (hint) hint.style.display = 'none';
   select.innerHTML = bulkConns.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
 }
 
@@ -1044,7 +1032,7 @@ function onSchedConnectionChange(){
   const type = opt ? opt.dataset.type : null;
 
   const modeWrap = document.getElementById('sched-mode-wrap');
-  if (type === 'google_bulk') {
+  if (['google', 'google_bulk', 'gmail_api'].includes(type)) {
     modeWrap.style.display = 'block';
     onSchedModeChange();
   } else {
@@ -1069,7 +1057,7 @@ async function createSchedule(){
   const select = document.getElementById('sched-connection');
   const opt = select.options[select.selectedIndex];
   const connType = opt ? opt.dataset.type : null;
-  const mode = connType === 'google_bulk' ? document.getElementById('sched-mode').value : 'single';
+  const mode = ['google', 'google_bulk', 'gmail_api'].includes(connType) ? document.getElementById('sched-mode').value : 'single';
   const name = document.getElementById('sched-name').value.trim();
   const toAddress = document.getElementById('sched-to').value.trim();
   const subject = document.getElementById('sched-subject').value.trim();
