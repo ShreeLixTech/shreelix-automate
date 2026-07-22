@@ -683,7 +683,8 @@ def bulk_generate_and_send(payload: BulkDocumentSendRequest, db: Session = Depen
         try:
             # Fresh access token per row — long bulk jobs can outlast a single token's ~1hr lifetime
             row_access_token = get_fresh_access_token(bulk_config["refresh_token"])
-            copy_id = duplicate_slides_template(row_access_token, payload.slides_template_id, f"temp-{filename}")
+            slides_id = extract_spreadsheet_id(payload.slides_template_id)
+            copy_id = duplicate_slides_template(row_access_token, slides_id, f"temp-{filename}")
             fill_slides_placeholders(row_access_token, copy_id, row_dict)
             pdf_bytes = export_slides_as_pdf(row_access_token, copy_id)
             send_via_gmail_api_with_attachment(bulk_config, subject, body, to_addr, pdf_bytes, filename)
