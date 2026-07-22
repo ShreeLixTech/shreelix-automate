@@ -170,6 +170,18 @@ class BulkSendRequest(BaseModel):
     body_template: str
 
 
+class BulkDocumentSendRequest(BaseModel):
+    owner_token: str
+    bulk_connection_id: int
+    spreadsheet_id: str
+    sheet_range: str = "A1:Z1000"
+    email_column: str
+    slides_template_id: str  # the Google Slides presentation to use as a template
+    pdf_filename_template: str = "Document-{{name}}.pdf"
+    subject_template: str
+    body_template: str
+
+
 class SendMessageRequest(BaseModel):
     owner_token: str
     connection_id: int
@@ -619,6 +631,85 @@ def bulk_send(payload: BulkSendRequest, db: Session = Depends(get_db)):
     return results
 
 
+@app.post("/bulk/generate-and-send")
+def bulk_generate_and_send(payload: BulkDocumentSendRequest, db: Session = Depends(get_db)):
+    """For every row in the sheet: duplicate the Slides template, fill in that row's data,
+    export as PDF, email it as an attachment, then clean up the temporary copy."""
+    bulk_conn = db.query(Connection).filter(
+        Connection.id == payload.bulk_connection_id, Connection.owner_token == payload.owner_token
+    ).first()
+    if not bulk_conn or bulk_conn.conn_type != "google_bulk":
+        raise HTTPException(status_code=404, detail="Bulk Google connection not found")
+
+    bulk_config = _json.loads(bulk_conn.config)
+    access_token = get_fresh_access_token(bulk_config["refresh_token"])
+    sheet_id = extract_spreadsheet_id(payload.spreadsheet_id)
+
+    resp = _requests.get(
+        f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{payload.sheet_range}",
+        headers={"Authorization": f"Bearer {access_token}"}, timeout=15
+    )
+    if not resp.ok:
+        raise HTTPException(status_code=502, detail=f"Couldn't read the sheet: {resp.text[:200]}")
+
+    values = resp.json().get("values", [])
+    if len(values) < 2:
+        raise HTTPException(status_code=400, detail="Sheet has no data rows")
+
+    headers = values[0]
+    if payload.email_column not in headers:
+        raise HTTPException(status_code=400, detail=f"Column '{payload.email_column}' not found. Found columns: {headers}")
+
+    results = {"sent": 0, "failed": 0, "errors": []}
+
+    for row in values[1:]:
+        row_dict = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
+        to_addr = row_dict.get(payload.email_column, "").strip()
+        if not to_addr:
+            results["failed"] += 1
+            results["errors"].append("Skipped a row with no email address")
+            continue
+
+        subject = payload.subject_template
+        body = payload.body_template
+        filename = payload.pdf_filename_template
+        for col, val in row_dict.items():
+            subject = subject.replace("{{" + col + "}}", str(val))
+            body = body.replace("{{" + col + "}}", str(val))
+            filename = filename.replace("{{" + col + "}}", str(val))
+
+        copy_id = None
+        row_access_token = None
+        try:
+            # Fresh access token per row — long bulk jobs can outlast a single token's ~1hr lifetime
+            row_access_token = get_fresh_access_token(bulk_config["refresh_token"])
+            copy_id = duplicate_slides_template(row_access_token, payload.slides_template_id, f"temp-{filename}")
+            fill_slides_placeholders(row_access_token, copy_id, row_dict)
+            pdf_bytes = export_slides_as_pdf(row_access_token, copy_id)
+            send_via_gmail_api_with_attachment(bulk_config, subject, body, to_addr, pdf_bytes, filename)
+
+            results["sent"] += 1
+            db.add(MessageLog(
+                owner_token=payload.owner_token, connection_id=bulk_conn.id, connection_name=bulk_conn.name,
+                subject=subject, body_preview=f"[PDF attached: {filename}] " + (body[:100] if len(body) > 100 else body),
+                status="sent",
+            ))
+        except Exception as e:
+            results["failed"] += 1
+            results["errors"].append(f"{to_addr}: {str(e)[:150]}")
+            db.add(MessageLog(
+                owner_token=payload.owner_token, connection_id=bulk_conn.id, connection_name=bulk_conn.name,
+                subject=subject, body_preview=f"[PDF generation failed]",
+                status="failed", error=str(e)[:300],
+            ))
+        finally:
+            if copy_id and row_access_token:
+                delete_drive_file(row_access_token, copy_id)
+
+    db.commit()
+    return results
+
+
 @app.post("/connections", response_model=ConnectionOut)
 def create_connection(payload: ConnectionCreate, db: Session = Depends(get_db)):
     if payload.conn_type not in {"smtp", "webhook", "http"}:
@@ -744,6 +835,97 @@ def send_via_gmail_api(config: dict, subject: str, body: str, to_addr: str):
     )
     if not send_resp.ok:
         raise RuntimeError(f"Gmail API rejected the send: {send_resp.text[:200]}")
+
+
+def send_via_gmail_api_with_attachment(config: dict, subject: str, body: str, to_addr: str, attachment_bytes: bytes, attachment_filename: str):
+    import base64
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.base import MIMEBase
+    from email.mime.text import MIMEText as _MIMEText
+    from email import encoders
+
+    access_token = get_fresh_access_token(config["refresh_token"])
+    from_email = config.get("email", "me")
+
+    msg = MIMEMultipart()
+    msg["Subject"] = subject or "(no subject)"
+    msg["From"] = from_email
+    msg["To"] = to_addr
+    msg.attach(_MIMEText(body))
+
+    part = MIMEBase("application", "pdf")
+    part.set_payload(attachment_bytes)
+    encoders.encode_base64(part)
+    part.add_header("Content-Disposition", f'attachment; filename="{attachment_filename}"')
+    msg.attach(part)
+
+    raw_message = base64.urlsafe_b64encode(msg.as_bytes()).decode("utf-8")
+    send_resp = _requests.post(
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+        json={"raw": raw_message},
+        timeout=20,
+    )
+    if not send_resp.ok:
+        raise RuntimeError(f"Gmail API rejected the send: {send_resp.text[:200]}")
+
+
+def duplicate_slides_template(access_token: str, template_id: str, new_name: str) -> str:
+    """Makes a fresh copy of a Slides template via the Drive API. Returns the new file's ID."""
+    resp = _requests.post(
+        f"https://www.googleapis.com/drive/v3/files/{template_id}/copy",
+        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+        json={"name": new_name},
+        timeout=20,
+    )
+    if not resp.ok:
+        raise RuntimeError(f"Couldn't duplicate the Slides template: {resp.text[:200]}")
+    return resp.json()["id"]
+
+
+def fill_slides_placeholders(access_token: str, file_id: str, replacements: dict):
+    """Replaces every {{column}} placeholder in the copied Slides file with real values, via batchUpdate."""
+    requests_body = []
+    for placeholder, value in replacements.items():
+        requests_body.append({
+            "replaceAllText": {
+                "containsText": {"text": "{{" + placeholder + "}}", "matchCase": True},
+                "replaceText": str(value),
+            }
+        })
+    resp = _requests.post(
+        f"https://slides.googleapis.com/v1/presentations/{file_id}:batchUpdate",
+        headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
+        json={"requests": requests_body},
+        timeout=20,
+    )
+    if not resp.ok:
+        raise RuntimeError(f"Couldn't fill in the template: {resp.text[:200]}")
+
+
+def export_slides_as_pdf(access_token: str, file_id: str) -> bytes:
+    """Exports a Google Slides file as PDF bytes via the Drive API."""
+    resp = _requests.get(
+        f"https://www.googleapis.com/drive/v3/files/{file_id}/export",
+        headers={"Authorization": f"Bearer {access_token}"},
+        params={"mimeType": "application/pdf"},
+        timeout=30,
+    )
+    if not resp.ok:
+        raise RuntimeError(f"Couldn't export the document as PDF: {resp.text[:200]}")
+    return resp.content
+
+
+def delete_drive_file(access_token: str, file_id: str):
+    """Cleans up the temporary duplicated file after we've exported it — best-effort, doesn't raise on failure."""
+    try:
+        _requests.delete(
+            f"https://www.googleapis.com/drive/v3/files/{file_id}",
+            headers={"Authorization": f"Bearer {access_token}"},
+            timeout=15,
+        )
+    except Exception:
+        pass  # cleanup failure shouldn't break the actual send
 
 
 @app.post("/send", response_model=MessageLogOut)
