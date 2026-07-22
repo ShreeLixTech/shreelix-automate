@@ -26,7 +26,8 @@
   .back-link{font-size:13.5px;color:rgba(255,255,255,0.75);}
   .back-link:hover{color:#fff;}
 
-  header.page{padding:40px 0 8px;}
+  header.page{padding:48px 0 16px;}
+  .accent-bar{width:44px;height:4px;background:linear-gradient(90deg,var(--navy),var(--blue));border-radius:2px;margin-bottom:20px;}
   header.page h1{font-size:30px;font-weight:700;}
   header.page p{color:var(--muted);margin-top:8px;font-size:15px;max-width:600px;}
   .status-row{display:flex;align-items:center;gap:8px;margin-top:14px;font-size:13px;color:var(--muted);}
@@ -43,7 +44,7 @@
   .grid2{display:grid;grid-template-columns:1fr 1.4fr;gap:24px;align-items:start;}
   @media(max-width:800px){.grid2{grid-template-columns:1fr;}}
 
-  .card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:24px;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:28px;box-shadow:0 1px 2px rgba(11,31,58,0.04), 0 4px 16px rgba(11,31,58,0.05);}
   .card h3{font-size:17px;font-weight:600;margin-bottom:16px;}
 
   label{display:block;font-size:13px;font-weight:600;color:var(--navy);margin-bottom:6px;margin-top:14px;}
@@ -60,17 +61,19 @@
   .faq-q{font-weight:600;color:var(--navy);font-size:14px;margin-bottom:6px;}
   .faq-a{font-size:13px;color:var(--muted);line-height:1.6;}
   .faq-a code{background:var(--bg);padding:1px 5px;border-radius:4px;font-size:12px;}
-  .step-guide{background:#EAF2FF;border:1px solid #C9E0FF;border-radius:10px;padding:14px 16px;margin-bottom:18px;font-size:13px;color:var(--blue-deep);line-height:1.7;}
+  .step-guide{background:#EAF2FF;border:1px solid #C9E0FF;border-radius:10px;padding:16px 18px;margin-bottom:24px;font-size:13px;color:var(--blue-deep);line-height:1.7;}
   .step-guide b{color:var(--navy);}
 
   .btn{
     display:inline-flex;align-items:center;justify-content:center;gap:6px;
-    background:var(--navy);color:#fff;padding:11px 20px;border-radius:8px;
+    background:linear-gradient(135deg,var(--navy),var(--navy-soft));color:#fff;padding:12px 20px;border-radius:9px;
     font-weight:600;font-size:14px;border:none;cursor:pointer;margin-top:18px;width:100%;
+    box-shadow:0 1px 2px rgba(11,31,58,0.15);transition:all .15s ease;
   }
-  .btn:hover{background:var(--navy-soft);}
-  .btn:disabled{opacity:0.5;cursor:not-allowed;}
-  .btn.secondary{background:transparent;border:1.5px solid var(--border);color:var(--navy);}
+  .btn:hover{transform:translateY(-1px);box-shadow:0 4px 12px rgba(11,31,58,0.2);}
+  .btn:disabled{opacity:0.5;cursor:not-allowed;transform:none;box-shadow:none;}
+  .btn.secondary{background:transparent;border:1.5px solid var(--border);color:var(--navy);box-shadow:none;}
+  .btn.secondary:hover{background:var(--bg);border-color:#C9D6E5;transform:none;}
   .btn.small{width:auto;padding:6px 12px;font-size:12.5px;margin-top:0;}
   .btn.danger{background:var(--red);}
 
@@ -91,13 +94,20 @@
   .conn-type-badge.gmail_api{background:var(--green-bg);color:var(--green);}
   .conn-type-badge.google_bulk{background:#F3E8FF;color:#7E22CE;}
 
-  .conn-row{display:flex;justify-content:space-between;align-items:center;padding:14px;border:1px solid var(--border);border-radius:10px;margin-bottom:10px;}
+  .conn-row{display:flex;justify-content:space-between;align-items:center;padding:16px 18px;border:1px solid var(--border);border-left:3px solid var(--border);border-radius:10px;margin-bottom:10px;transition:all .15s ease;}
+  .conn-row:hover{border-color:#D5DEE8;border-left-color:var(--blue);box-shadow:0 2px 8px rgba(11,31,58,0.06);transform:translateY(-1px);}
+  .conn-row.gmail_api{border-left-color:var(--green);}
+  .conn-row.google_bulk{border-left-color:#7E22CE;}
+  .conn-row.webhook{border-left-color:#7E22CE;}
+  .conn-row.http{border-left-color:var(--amber);}
   .conn-row .cname{font-weight:600;font-size:14px;color:var(--navy);}
   .conn-row .cdetail{font-size:12.5px;color:var(--muted);margin-top:3px;}
 
   .type-selector{display:flex;gap:8px;margin-top:6px;}
-  .type-btn{flex:1;padding:12px 8px;border:1.5px solid var(--border);border-radius:8px;text-align:center;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;}
-  .type-btn.active{border-color:var(--blue);color:var(--blue-deep);background:#EAF2FF;}
+  .type-btn{flex:1;padding:14px 8px;border:1.5px solid var(--border);border-radius:10px;text-align:center;font-size:13px;font-weight:600;color:var(--muted);cursor:pointer;transition:all .15s ease;}
+  .type-btn:hover{border-color:#C9D6E5;background:var(--bg);}
+  .type-btn.active{border-color:var(--blue);color:var(--blue-deep);background:#EAF2FF;box-shadow:0 0 0 3px rgba(30,144,255,0.1);}
+  .type-btn .ticon{display:block;font-size:18px;margin-bottom:4px;}
 
   .toast{
     position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(120%);
@@ -126,13 +136,14 @@
 
 <header class="page">
   <div class="wrap">
+    <div class="accent-bar"></div>
     <div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:12px;">
       <div>
         <h1>ShreeLix Automate</h1>
         <p>Connect your own email, Slack, or any API — then send messages, alerts, or reports automatically. No code required.</p>
       </div>
       <div style="text-align:right;flex-shrink:0;">
-        <div id="tokenBadge" style="background:var(--bg);border:1px solid var(--border);padding:8px 14px;border-radius:999px;font-size:12.5px;font-weight:600;color:var(--navy);white-space:nowrap;">100 free credits left</div>
+        <div id="tokenBadge" style="background:#fff;border:1px solid var(--border);padding:9px 16px;border-radius:999px;font-size:12.5px;font-weight:600;color:var(--navy);white-space:nowrap;box-shadow:0 1px 3px rgba(11,31,58,0.06);">100 free credits left</div>
         <a href="#" onclick="openPricing(event)" style="display:block;margin-top:8px;font-size:12.5px;color:var(--blue-deep);white-space:nowrap;font-weight:600;">💳 View pricing</a>
         <a href="tel:+918840177216" style="display:block;margin-top:6px;font-size:12.5px;color:var(--muted);white-space:nowrap;">📞 +91 88401 77216</a>
       </div>
@@ -163,10 +174,10 @@
         <h3>Add a connection</h3>
         <label>Type</label>
         <div class="type-selector">
-          <div class="type-btn active" data-type="gmail_api" onclick="selectConnType('gmail_api')">Gmail</div>
-          <div class="type-btn" data-type="webhook" onclick="selectConnType('webhook')">Webhook</div>
-          <div class="type-btn" data-type="http" onclick="selectConnType('http')">HTTP API</div>
-          <div class="type-btn" data-type="smtp" onclick="selectConnType('smtp')">Other Email</div>
+          <div class="type-btn active" data-type="gmail_api" onclick="selectConnType('gmail_api')"><span class="ticon">✉️</span>Gmail</div>
+          <div class="type-btn" data-type="webhook" onclick="selectConnType('webhook')"><span class="ticon">🔗</span>Webhook</div>
+          <div class="type-btn" data-type="http" onclick="selectConnType('http')"><span class="ticon">⚡</span>HTTP API</div>
+          <div class="type-btn" data-type="smtp" onclick="selectConnType('smtp')"><span class="ticon">📮</span>Other Email</div>
         </div>
 
         <div id="fields-gmail_api">
@@ -697,7 +708,7 @@ function startGmailConnect(){
     client_id: GOOGLE_CLIENT_ID,
     redirect_uri: GOOGLE_REDIRECT_URI,
     response_type: 'code',
-    scope: 'https://www.googleapis.com/auth/gmail.send',
+    scope: 'https://www.googleapis.com/auth/gmail.send email profile',
     access_type: 'offline',
     prompt: 'consent',
     state: USER_TOKEN + '|gmail',
@@ -718,6 +729,7 @@ function startBulkGoogleConnect(){
       'https://www.googleapis.com/auth/spreadsheets.readonly',
       'https://www.googleapis.com/auth/presentations',
       'https://www.googleapis.com/auth/drive',
+      'email', 'profile',
     ].join(' '),
     access_type: 'offline',
     prompt: 'consent',
@@ -763,7 +775,7 @@ async function loadConnections(){
       return;
     }
     wrap.innerHTML = connections.map(c => `
-      <div class="conn-row">
+      <div class="conn-row ${c.conn_type}">
         <div>
           <span class="conn-type-badge ${c.conn_type}">${c.conn_type === 'gmail_api' ? 'gmail' : c.conn_type}</span>
           <div class="cname" style="margin-top:6px;">${escapeHtml(c.name)}</div>
