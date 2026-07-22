@@ -139,6 +139,7 @@
     <div class="tab active" data-tab="connections">Connections</div>
     <div class="tab" data-tab="compose">Compose & Send</div>
     <div class="tab" data-tab="bulk">Bulk Merge</div>
+    <div class="tab" data-tab="schedules">Schedules</div>
     <div class="tab" data-tab="history">History</div>
   </div>
 
@@ -163,29 +164,11 @@
         </div>
 
         <div id="fields-smtp" style="display:none;">
-          <div style="background:#FFF3E0;border:1px solid #F5D98B;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:12.5px;color:#8A6416;">
-            ⚠️ Our current free hosting blocks direct email server connections for Outlook, Yahoo, and other non-Gmail providers. This option is saved for later — please use the <b>Gmail</b> option above, which works today.
+          <div style="text-align:center;padding:40px 20px;">
+            <div style="font-size:32px;margin-bottom:12px;">🚧</div>
+            <div style="font-weight:600;color:var(--navy);font-size:15px;margin-bottom:6px;">Coming soon</div>
+            <div style="font-size:13px;color:var(--muted);max-width:280px;margin:0 auto;">Outlook, Yahoo, and custom email servers aren't available yet. Use <b>Gmail</b> in the meantime — it's fully working today.</div>
           </div>
-          <label for="conn-name">Connection name</label>
-          <input id="conn-name" placeholder="e.g. Team Outlook">
-          <label for="smtp-provider">Email provider</label>
-          <select id="smtp-provider" onchange="applyProviderPreset()">
-            <option value="outlook">Outlook / Office 365</option>
-            <option value="yahoo">Yahoo Mail</option>
-            <option value="other">Other (I'll enter my own server)</option>
-          </select>
-          <label for="smtp-username">Your email address</label>
-          <input id="smtp-username" placeholder="you@example.com">
-          <label for="smtp-password">App Password</label>
-          <input id="smtp-password" type="password" placeholder="Not your normal login password">
-          <div class="hint">This must be an "App Password", not your regular login password.</div>
-          <div id="smtp-advanced" style="display:none;">
-            <label for="smtp-host">SMTP server</label>
-            <input id="smtp-host" placeholder="e.g. smtp.example.com">
-            <label for="smtp-port">Port</label>
-            <input id="smtp-port" type="number" value="587" placeholder="587">
-          </div>
-          <button class="btn secondary" id="addConnBtnSmtp">Save connection (may not send successfully yet)</button>
         </div>
 
         <div id="fields-webhook" style="display:none;">
@@ -285,6 +268,49 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
         <textarea id="bulk-body" placeholder="Hi {{name}}, ... use any {{column_name}} from your sheet"></textarea>
         <button class="btn" id="bulkSendBtn" onclick="runBulkSend()">Send to all rows</button>
         <div id="bulk-result" style="margin-top:14px;font-size:13.5px;"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SCHEDULES -->
+  <div class="panel" id="panel-schedules">
+    <div class="grid2">
+      <div class="card">
+        <h3>Create a schedule</h3>
+        <div class="hint" style="margin-bottom:14px;">Checked every few minutes — a schedule set for 6:00 PM may fire a few minutes after, not to the exact second.</div>
+        <label for="sched-name">Name</label>
+        <input id="sched-name" placeholder="e.g. Daily sales summary">
+        <label for="sched-connection">Send via</label>
+        <select id="sched-connection" onchange="onSchedConnectionChange()"></select>
+        <div id="sched-to-wrap">
+          <label for="sched-to">To</label>
+          <input id="sched-to" placeholder="recipient@example.com">
+        </div>
+        <label for="sched-subject">Subject</label>
+        <input id="sched-subject" placeholder="Write anything">
+        <label for="sched-body">Message</label>
+        <textarea id="sched-body" placeholder="Your message"></textarea>
+        <label for="sched-frequency">Repeat</label>
+        <select id="sched-frequency" onchange="onSchedFrequencyChange()">
+          <option value="daily">Every day</option>
+          <option value="once">Just once</option>
+        </select>
+        <div id="sched-date-wrap" style="display:none;">
+          <label for="sched-date">Date</label>
+          <input id="sched-date" type="date">
+        </div>
+        <label for="sched-time">Time (India time)</label>
+        <input id="sched-time" type="time" value="09:00">
+        <button class="btn" id="createScheduleBtn" onclick="createSchedule()">Create schedule</button>
+      </div>
+      <div class="card">
+        <h3>Your schedules</h3>
+        <div id="schedulesWrap"><div class="empty">Loading…</div></div>
+        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);font-size:12.5px;color:var(--muted);">
+          <b>One-time setup needed:</b> schedules only run when something "wakes up" the server periodically. Go to <a href="https://cron-job.org" target="_blank" style="color:var(--blue-deep);">cron-job.org</a> (free, no cost) → create a free account → set up a job that sends a GET or POST request to:
+          <div style="background:var(--bg);padding:8px 10px;border-radius:6px;margin:8px 0;font-family:monospace;font-size:11.5px;word-break:break-all;">https://shreelix-automate-api.onrender.com/schedules/run-due</div>
+          every 5 minutes. This single setup covers all your schedules going forward.
+        </div>
       </div>
     </div>
   </div>
@@ -436,6 +462,7 @@ document.querySelectorAll('.tab').forEach(tab => {
     if (tab.dataset.tab === 'compose') populateSendConnectionDropdown();
     if (tab.dataset.tab === 'history') loadHistory();
     if (tab.dataset.tab === 'bulk') populateBulkConnectionDropdown();
+    if (tab.dataset.tab === 'schedules') { populateSchedConnectionDropdown(); loadSchedules(); }
   });
 });
 
@@ -562,24 +589,6 @@ function openPricing(e){
 }
 
 // ---------- Connection type selector ----------
-const PROVIDER_PRESETS = {
-  outlook: {host: 'smtp.office365.com', port: 587},
-  yahoo: {host: 'smtp.mail.yahoo.com', port: 587},
-  other: null,
-};
-function applyProviderPreset(){
-  const provider = document.getElementById('smtp-provider').value;
-  const advanced = document.getElementById('smtp-advanced');
-  if (provider === 'other') {
-    advanced.style.display = 'block';
-  } else {
-    advanced.style.display = 'none';
-    const preset = PROVIDER_PRESETS[provider];
-    document.getElementById('smtp-host').value = preset.host;
-    document.getElementById('smtp-port').value = preset.port;
-  }
-}
-
 function selectConnType(type){
   document.querySelectorAll('.type-btn').forEach(b => b.classList.toggle('active', b.dataset.type === type));
   document.getElementById('fields-gmail_api').style.display = type === 'gmail_api' ? 'block' : 'none';
@@ -770,19 +779,7 @@ async function saveConnection(type, btnId){
 
   let name = '';
   let config = {};
-  if (type === 'smtp') {
-    name = document.getElementById('conn-name').value.trim();
-    config = {
-      host: document.getElementById('smtp-host').value.trim(),
-      port: parseInt(document.getElementById('smtp-port').value) || 587,
-      username: document.getElementById('smtp-username').value.trim(),
-      password: document.getElementById('smtp-password').value,
-    };
-    if (!name) { toast('Give this connection a name', true); return; }
-    if (!config.host || !config.username || !config.password) {
-      toast('Fill in your email and app password', true); return;
-    }
-  } else if (type === 'webhook') {
+  if (type === 'webhook') {
     name = document.getElementById('webhook-conn-name').value.trim();
     config = { url: document.getElementById('webhook-url').value.trim() };
     if (!name) { toast('Give this connection a name', true); return; }
@@ -819,7 +816,6 @@ async function saveConnection(type, btnId){
   }
 }
 
-document.getElementById('addConnBtnSmtp').addEventListener('click', () => saveConnection('smtp', 'addConnBtnSmtp'));
 document.getElementById('addConnBtnWebhook').addEventListener('click', () => saveConnection('webhook', 'addConnBtnWebhook'));
 document.getElementById('addConnBtnHttp').addEventListener('click', () => saveConnection('http', 'addConnBtnHttp'));
 
@@ -883,6 +879,122 @@ document.getElementById('sendBtn').addEventListener('click', async () => {
     btn.disabled = false; btn.textContent = 'Send now';
   }
 });
+
+// ---------- Schedules ----------
+function populateSchedConnectionDropdown(){
+  const select = document.getElementById('sched-connection');
+  if (connections.length === 0) {
+    select.innerHTML = `<option value="">No connections yet — add one in Connections tab first</option>`;
+    return;
+  }
+  select.innerHTML = connections.map(c => `<option value="${c.id}" data-type="${c.conn_type}">${escapeHtml(c.name)} (${c.conn_type === 'gmail_api' ? 'gmail' : c.conn_type})</option>`).join('');
+  onSchedConnectionChange();
+}
+function onSchedConnectionChange(){
+  const select = document.getElementById('sched-connection');
+  const opt = select.options[select.selectedIndex];
+  const type = opt ? opt.dataset.type : null;
+  document.getElementById('sched-to-wrap').style.display = (type === 'smtp' || type === 'gmail_api') ? 'block' : 'none';
+}
+function onSchedFrequencyChange(){
+  const freq = document.getElementById('sched-frequency').value;
+  document.getElementById('sched-date-wrap').style.display = freq === 'once' ? 'block' : 'none';
+}
+
+async function createSchedule(){
+  const connId = document.getElementById('sched-connection').value;
+  const select = document.getElementById('sched-connection');
+  const opt = select.options[select.selectedIndex];
+  const connType = opt ? opt.dataset.type : null;
+  const name = document.getElementById('sched-name').value.trim();
+  const toAddress = document.getElementById('sched-to').value.trim();
+  const subject = document.getElementById('sched-subject').value.trim();
+  const body = document.getElementById('sched-body').value.trim();
+  const frequency = document.getElementById('sched-frequency').value;
+  const scheduledDate = document.getElementById('sched-date').value;
+  const scheduledTime = document.getElementById('sched-time').value;
+
+  if (!connId) { toast('Choose a connection first', true); return; }
+  if (!name) { toast('Give this schedule a name', true); return; }
+  if ((connType === 'smtp' || connType === 'gmail_api') && !toAddress) { toast('Enter who to send this to', true); return; }
+  if (!body) { toast('Write a message', true); return; }
+  if (frequency === 'once' && !scheduledDate) { toast('Pick a date for a one-time schedule', true); return; }
+  if (!scheduledTime) { toast('Pick a time', true); return; }
+
+  if (!(await consumeToken())) return;
+
+  const btn = document.getElementById('createScheduleBtn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+  try {
+    await api('/schedules', {method:'POST', body: JSON.stringify({
+      owner_token: USER_TOKEN, connection_id: parseInt(connId), name,
+      to_address: toAddress || null, subject: subject || null, body,
+      frequency, scheduled_time: scheduledTime, scheduled_date: frequency === 'once' ? scheduledDate : null,
+    })});
+    toast('Schedule created');
+    document.getElementById('sched-name').value = '';
+    document.getElementById('sched-to').value = '';
+    document.getElementById('sched-subject').value = '';
+    document.getElementById('sched-body').value = '';
+    loadSchedules();
+  } catch(e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Create schedule';
+  }
+}
+
+async function loadSchedules(){
+  const wrap = document.getElementById('schedulesWrap');
+  try {
+    const schedules = await api('/schedules?owner_token=' + encodeURIComponent(USER_TOKEN));
+    if (schedules.length === 0) {
+      wrap.innerHTML = `<div class="empty"><div class="big">⏰</div>No schedules yet — create one on the left.</div>`;
+      return;
+    }
+    wrap.innerHTML = schedules.map(s => {
+      const freqLabel = s.frequency === 'daily' ? `Every day at ${s.scheduled_time}` : `Once on ${s.scheduled_date} at ${s.scheduled_time}`;
+      const lastRun = s.last_run_at ? new Date(s.last_run_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'}) : 'Never run yet';
+      return `
+        <div class="conn-row">
+          <div>
+            <div class="cname">${escapeHtml(s.name)}</div>
+            <div class="cdetail">${freqLabel} · Last run: ${lastRun}</div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center;">
+            <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);margin:0;font-weight:400;">
+              <input type="checkbox" style="width:auto;" ${s.is_active === 'yes' ? 'checked' : ''} onchange="toggleSchedule(${s.id}, this.checked)"> Active
+            </label>
+            <button class="btn small danger" onclick="deleteSchedule(${s.id}, '${escapeHtml(s.name).replace(/'/g,"\\'")}')">Delete</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch(e) {
+    wrap.innerHTML = `<div class="empty">Couldn't load schedules — the API may still be waking up.</div>`;
+  }
+}
+
+async function toggleSchedule(id, isActive){
+  try {
+    await api('/schedules/'+id+'/toggle', {method:'PATCH', body: JSON.stringify({owner_token: USER_TOKEN, is_active: isActive})});
+    toast(isActive ? 'Schedule resumed' : 'Schedule paused');
+  } catch(e) {
+    toast(e.message, true);
+    loadSchedules();
+  }
+}
+
+async function deleteSchedule(id, name){
+  if (!confirm(`Delete "${name}"? This can't be undone.`)) return;
+  try {
+    await api('/schedules/'+id+'?owner_token='+encodeURIComponent(USER_TOKEN), {method:'DELETE'});
+    toast('Schedule deleted');
+    loadSchedules();
+  } catch(e) {
+    toast(e.message, true);
+  }
+}
 
 // ---------- History ----------
 async function loadHistory(){
