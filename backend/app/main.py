@@ -482,9 +482,9 @@ def mask_connection_detail(conn_type: str, config: dict) -> str:
     if conn_type == "gmail_api":
         email = config.get("email", "your Gmail account")
         return f"{email} (Official Gmail API)"
-    if conn_type == "google_bulk":
+    if conn_type in {"google_bulk", "google"}:
         email = config.get("email", "your Google account")
-        return f"{email} (Sheets + Slides + Drive)"
+        return f"{email} (Gmail + Sheets + Slides + Drive)"
     return "Unknown connection"
 
 
@@ -581,7 +581,7 @@ def google_bulk_oauth_callback(payload: BulkGoogleOAuthCallback, db: Session = D
     db_conn = Connection(
         owner_token=payload.owner_token,
         name=payload.connection_name,
-        conn_type="google_bulk",
+        conn_type="google",
         config=_json.dumps(config),
     )
     db.add(db_conn)
@@ -607,7 +607,7 @@ def get_sheet_rows(payload: SheetRowsRequest, db: Session = Depends(get_db)):
     conn = db.query(Connection).filter(
         Connection.id == payload.connection_id, Connection.owner_token == payload.owner_token
     ).first()
-    if not conn or conn.conn_type != "google_bulk":
+    if not conn or conn.conn_type not in {"google_bulk", "google"}:
         raise HTTPException(status_code=404, detail="Bulk Google connection not found")
 
     config = _json.loads(conn.config)
@@ -702,7 +702,7 @@ def bulk_send(payload: BulkSendRequest, db: Session = Depends(get_db)):
     bulk_conn = db.query(Connection).filter(
         Connection.id == payload.bulk_connection_id, Connection.owner_token == payload.owner_token
     ).first()
-    if not bulk_conn or bulk_conn.conn_type != "google_bulk":
+    if not bulk_conn or bulk_conn.conn_type not in {"google_bulk", "google"}:
         raise HTTPException(status_code=404, detail="Bulk Google connection not found")
     return run_bulk_email_send(
         db, payload.owner_token, bulk_conn, payload.spreadsheet_id, payload.sheet_range,
@@ -792,7 +792,7 @@ def bulk_generate_and_send(payload: BulkDocumentSendRequest, db: Session = Depen
     bulk_conn = db.query(Connection).filter(
         Connection.id == payload.bulk_connection_id, Connection.owner_token == payload.owner_token
     ).first()
-    if not bulk_conn or bulk_conn.conn_type != "google_bulk":
+    if not bulk_conn or bulk_conn.conn_type not in {"google_bulk", "google"}:
         raise HTTPException(status_code=404, detail="Bulk Google connection not found")
     return run_bulk_document_send(
         db, payload.owner_token, bulk_conn, payload.spreadsheet_id, payload.sheet_range,
@@ -1098,8 +1098,8 @@ def create_schedule(payload: ScheduleCreate, db: Session = Depends(get_db)):
         if conn.conn_type in {"smtp", "gmail_api"} and not payload.to_address:
             raise HTTPException(status_code=400, detail="An email address to send to is required for this connection type")
     else:
-        if conn.conn_type != "google_bulk":
-            raise HTTPException(status_code=400, detail="Bulk modes require a 'Bulk Merge' connection, not a regular Gmail connection")
+        if conn.conn_type not in {"google_bulk", "google"}:
+            raise HTTPException(status_code=400, detail="Bulk modes require a Google connection with Sheets/Slides/Drive access — reconnect Google if this one was created before that was available")
         if not payload.spreadsheet_id or not payload.email_column:
             raise HTTPException(status_code=400, detail="Sheet URL and email column are required for bulk schedules")
         if payload.mode == "bulk_document" and not payload.slides_template_id:
