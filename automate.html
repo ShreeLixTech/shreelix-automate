@@ -19,7 +19,7 @@
   a{color:inherit;text-decoration:none;}
   .wrap{max-width:1100px;margin:0 auto;padding:0 24px;}
 
-  nav{background:var(--navy);padding:16px 0;}
+  nav{background:var(--navy);padding:16px 0;box-shadow:0 2px 12px rgba(0,0,0,0.15);position:relative;z-index:10;}
   nav .wrap{display:flex;align-items:center;justify-content:space-between;}
   .brand{display:flex;align-items:center;gap:10px;font-family:'Poppins',sans-serif;font-weight:700;font-size:18px;color:#fff;}
   .brand .mark{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--navy),var(--blue));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:14px;border:1px solid rgba(255,255,255,0.15);}
@@ -138,11 +138,19 @@
 
 <nav>
   <div class="wrap" style="display:flex;justify-content:space-between;align-items:center;">
-    <div class="brand"><span class="mark">S</span> ShreeLix</div>
+    <div class="brand">
+      <span class="mark" style="overflow:hidden;">
+        <img src="assets/shreelix-logo-icon.png" alt="ShreeLix" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+        <span style="display:none;width:100%;height:100%;align-items:center;justify-content:center;">S</span>
+      </span>
+      ShreeLix
+    </div>
     <div style="display:flex;align-items:center;gap:18px;">
-      <a href="#" onclick="openFaq(event)" style="font-size:13.5px;color:rgba(255,255,255,0.85);font-weight:600;">❓ Help &amp; FAQ</a>
-      <a href="#" onclick="logoutUser(event)" id="logoutLink" style="display:none;font-size:13.5px;color:rgba(255,255,255,0.85);font-weight:600;">🚪 Log out</a>
-      <a class="back-link" href="index.html">&larr; Back to website</a>
+      <a href="#" onclick="openFaq(event)" style="font-size:13.5px;color:rgba(255,255,255,0.85);font-weight:600;transition:color .15s ease;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.85)'">❓ Help &amp; FAQ</a>
+      <span style="width:1px;height:16px;background:rgba(255,255,255,0.15);" id="logoutDivider"></span>
+      <a href="#" onclick="logoutUser(event)" id="logoutLink" style="display:none;font-size:13px;color:rgba(255,255,255,0.6);font-weight:500;transition:color .15s ease;" onmouseover="this.style.color='#fff'" onmouseout="this.style.color='rgba(255,255,255,0.6)'">Log out</a>
+      <span style="width:1px;height:16px;background:rgba(255,255,255,0.15);"></span>
+      <a class="back-link" href="index.html" style="transition:color .15s ease;">&larr; Back to website</a>
     </div>
   </div>
 </nav>
@@ -621,7 +629,7 @@ async function handleGoogleCredential(response){
     USER_TOKEN = result.owner_token;
     localStorage.setItem('shreelix_automate_user_token', USER_TOKEN);
     document.getElementById('signInOverlay').classList.remove('force-open');
-    document.getElementById('logoutLink').style.display = 'inline';
+    setLogoutLinkVisible(true);
 
     if (result.is_new_user) {
       openBusinessSetup();
@@ -659,7 +667,7 @@ async function submitBusinessSetup(){
     cachedTokensUsed = result.user.tokens_used;
     updateTokenBadge();
     document.getElementById('businessSetupOverlay').classList.remove('force-open');
-    document.getElementById('logoutLink').style.display = 'inline';
+    setLogoutLinkVisible(true);
     loadConnections();
   } catch(e) {
     document.getElementById('regError').textContent = "Couldn't save — please try again.";
@@ -669,15 +677,21 @@ async function submitBusinessSetup(){
 }
 
 function showSignInIfNeeded(){
-  const logoutLink = document.getElementById('logoutLink');
   if (!isSignedIn()) {
-    if (logoutLink) logoutLink.style.display = 'none';
+    setLogoutLinkVisible(false);
     document.getElementById('signInOverlay').classList.add('force-open');
     initGoogleSignIn();
   } else {
-    if (logoutLink) logoutLink.style.display = 'inline';
+    setLogoutLinkVisible(true);
     refreshTokenStatus();
   }
+}
+
+function setLogoutLinkVisible(visible){
+  const link = document.getElementById('logoutLink');
+  const divider = document.getElementById('logoutDivider');
+  if (link) link.style.display = visible ? 'inline' : 'none';
+  if (divider) divider.style.display = visible ? 'inline-block' : 'none';
 }
 
 function logoutUser(e){
@@ -691,7 +705,7 @@ function performLogout(message){
   USER_TOKEN = null;
   cachedTokensUsed = 0;
   connections = [];
-  document.getElementById('logoutLink').style.display = 'none';
+  setLogoutLinkVisible(false);
   document.getElementById('connectionsWrap').innerHTML = '';
   document.getElementById('reg-business').value = '';
   updateTokenBadge();
