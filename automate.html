@@ -488,6 +488,34 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
 </div>
 
 <!-- HELP & FAQ -->
+<!-- WORKFLOW STEPS -->
+<div class="overlay" id="stepsOverlay">
+  <div class="modal" style="max-width:560px;max-height:85vh;overflow-y:auto;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <h3 style="font-size:19px;">Workflow steps</h3>
+      <button onclick="document.getElementById('stepsOverlay').classList.remove('open')" style="background:none;border:none;font-size:22px;color:var(--muted);cursor:pointer;">&times;</button>
+    </div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:18px;">For "<span id="stepsScheduleName" style="font-weight:600;color:var(--navy);"></span>". Step 1 is this schedule's own action — add more steps below to chain additional actions after it, all from the same trigger.</p>
+
+    <div id="stepsListWrap" style="margin-bottom:20px;"><div class="empty">Loading…</div></div>
+
+    <div style="border-top:1px solid var(--border);padding-top:18px;">
+      <h3 style="font-size:15px;margin-bottom:12px;">Add a step</h3>
+      <label for="step-connection">Send via</label>
+      <select id="step-connection" onchange="onStepConnectionChange()"></select>
+      <div id="step-to-wrap">
+        <label for="step-to">To</label>
+        <input id="step-to" placeholder="recipient@example.com">
+      </div>
+      <label for="step-subject">Subject</label>
+      <input id="step-subject" placeholder="Write anything">
+      <label for="step-body">Message</label>
+      <textarea id="step-body" placeholder="Your message for this step" style="min-height:80px;"></textarea>
+      <button class="btn" id="addStepBtn" onclick="addWorkflowStep()">Add this step</button>
+    </div>
+  </div>
+</div>
+
 <div class="overlay" id="faqOverlay">
   <div class="modal" style="max-width:560px;max-height:80vh;overflow-y:auto;">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:18px;">
@@ -1191,6 +1219,7 @@ async function loadSchedules(){
             <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);margin:0;font-weight:400;">
               <input type="checkbox" style="width:auto;" ${s.is_active === 'yes' ? 'checked' : ''} onchange="toggleSchedule(${s.id}, this.checked)"> Active
             </label>
+            ${s.mode === 'single' ? `<button class="btn small secondary" onclick="openStepsModal(${s.id}, '${escapeHtml(s.name).replace(/'/g,"\\'")}')">+ Steps</button>` : ''}
             <button class="btn small danger" onclick="deleteSchedule(${s.id}, '${escapeHtml(s.name).replace(/'/g,"\\'")}')">Delete</button>
           </div>
         </div>
@@ -1208,6 +1237,94 @@ async function toggleSchedule(id, isActive){
   } catch(e) {
     toast(e.message, true);
     loadSchedules();
+  }
+}
+
+// ---------- Workflow Steps (chained multi-step actions) ----------
+let currentStepsScheduleId = null;
+
+function openStepsModal(scheduleId, scheduleName){
+  currentStepsScheduleId = scheduleId;
+  document.getElementById('stepsScheduleName').textContent = scheduleName;
+  document.getElementById('step-connection').innerHTML = connections.map(c => `<option value="${c.id}" data-type="${c.conn_type}">${escapeHtml(c.name)} (${c.conn_type === 'gmail_api' || c.conn_type === 'google' ? 'gmail' : c.conn_type})</option>`).join('');
+  onStepConnectionChange();
+  document.getElementById('step-to').value = '';
+  document.getElementById('step-subject').value = '';
+  document.getElementById('step-body').value = '';
+  document.getElementById('stepsOverlay').classList.add('open');
+  loadWorkflowSteps();
+}
+
+function onStepConnectionChange(){
+  const select = document.getElementById('step-connection');
+  const opt = select.options[select.selectedIndex];
+  const type = opt ? opt.dataset.type : null;
+  document.getElementById('step-to-wrap').style.display = ['smtp', 'gmail_api', 'google', 'google_bulk'].includes(type) ? 'block' : 'none';
+}
+
+async function loadWorkflowSteps(){
+  const wrap = document.getElementById('stepsListWrap');
+  wrap.innerHTML = `<div class="empty">Loading…</div>`;
+  try {
+    const steps = await api(`/schedules/${currentStepsScheduleId}/steps?owner_token=` + encodeURIComponent(USER_TOKEN));
+    if (steps.length === 0) {
+      wrap.innerHTML = `<div class="empty" style="padding:16px;">No extra steps yet — this schedule only does its own single action. Add a step below to chain another action after it.</div>`;
+      return;
+    }
+    wrap.innerHTML = steps.map(s => `
+      <div class="conn-row" style="margin-bottom:8px;">
+        <div>
+          <div class="cname">Step ${s.step_order}</div>
+          <div class="cdetail">${escapeHtml(s.body.replace(/<[^>]*>/g, '').slice(0, 60))}${s.body.length > 60 ? '…' : ''}</div>
+        </div>
+        <button class="btn small danger" onclick="deleteWorkflowStep(${s.id})">Delete</button>
+      </div>
+    `).join('');
+  } catch(e) {
+    wrap.innerHTML = `<div class="empty">Couldn't load steps.</div>`;
+  }
+}
+
+async function addWorkflowStep(){
+  const connId = document.getElementById('step-connection').value;
+  const select = document.getElementById('step-connection');
+  const opt = select.options[select.selectedIndex];
+  const connType = opt ? opt.dataset.type : null;
+  const toAddress = document.getElementById('step-to').value.trim();
+  const subject = document.getElementById('step-subject').value.trim();
+  const body = document.getElementById('step-body').value.trim();
+
+  if (!connId) { toast('Choose a connection for this step', true); return; }
+  if (['smtp','gmail_api','google','google_bulk'].includes(connType) && !toAddress) { toast('Enter who this step sends to', true); return; }
+  if (!body) { toast('Write a message for this step', true); return; }
+  if (!(await consumeToken())) return;
+
+  const btn = document.getElementById('addStepBtn');
+  btn.disabled = true; btn.textContent = 'Adding…';
+  try {
+    await api(`/schedules/${currentStepsScheduleId}/steps`, {method:'POST', body: JSON.stringify({
+      owner_token: USER_TOKEN, connection_id: parseInt(connId), to_address: toAddress || null, subject: subject || null, body,
+    })});
+    toast('Step added');
+    document.getElementById('step-to').value = '';
+    document.getElementById('step-subject').value = '';
+    document.getElementById('step-body').value = '';
+    loadWorkflowSteps();
+  } catch(e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Add this step';
+  }
+}
+
+async function deleteWorkflowStep(stepId){
+  if (!confirm('Remove this step from the workflow?')) return;
+  try {
+    await api(`/schedules/${currentStepsScheduleId}/steps/${stepId}?owner_token=` + encodeURIComponent(USER_TOKEN), {method:'DELETE'});
+    toast('Step removed');
+    loadWorkflowSteps();
+  } catch(e) {
+    toast(e.message, true);
   }
 }
 
