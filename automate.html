@@ -635,13 +635,15 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
     <div style="border:1.5px solid var(--navy);border-radius:14px;padding:18px;background:var(--bg);">
       <div style="font-size:13px;font-weight:700;color:var(--blue-deep);margin-bottom:4px;">Pro</div>
       <div style="font-size:24px;font-weight:800;color:var(--navy);font-family:'Poppins',sans-serif;margin-bottom:10px;">₹299<span style="font-size:13px;font-weight:500;color:var(--muted);">/month</span></div>
-      <ul style="margin:0 0 0 18px;padding:0;font-size:13px;color:var(--text);line-height:1.9;">
+      <ul style="margin:0 0 0 18px;padding:0;font-size:13px;color:var(--text);line-height:1.9;margin-bottom:14px;">
         <li>Unlimited messages sent</li>
         <li>Everything in Free, no limits</li>
         <li>Priority support</li>
       </ul>
+      <button class="btn" id="pricingPayBtn" onclick="startRazorpayPayment('pricingPayBtn','pricingPayError','pricingOverlay')" style="margin-top:0;">💳 Pay ₹299 &amp; upgrade now</button>
+      <div id="pricingPayError" style="color:var(--red);font-size:12px;margin-top:8px;"></div>
     </div>
-    <p style="font-size:11.5px;color:var(--muted);margin-top:14px;text-align:center;">Call or WhatsApp <b>+91 88401 77216</b> to upgrade anytime.</p>
+    <p style="font-size:11.5px;color:var(--muted);margin-top:14px;text-align:center;">Or call/WhatsApp <b>+91 88401 77216</b> to pay manually.</p>
   </div>
 </div>
 
@@ -970,12 +972,16 @@ async function consumeToken(){
   }
 }
 
-async function startRazorpayPayment(){
-  const errorEl = document.getElementById('paywallError');
+async function startRazorpayPayment(btnId, errorId, overlayId){
+  btnId = btnId || 'razorpayPayBtn';
+  errorId = errorId || 'paywallError';
+  overlayId = overlayId || 'paywallOverlay';
+  const errorEl = document.getElementById(errorId);
+  const btn = document.getElementById(btnId);
+  const originalText = btn.textContent;
   errorEl.textContent = '';
   if (!isSignedIn()) { errorEl.textContent = 'Please sign in first'; return; }
 
-  const btn = document.getElementById('razorpayPayBtn');
   btn.disabled = true; btn.textContent = 'Loading…';
 
   try {
@@ -998,25 +1004,25 @@ async function startRazorpayPayment(){
             razorpay_payment_id: response.razorpay_payment_id,
             razorpay_signature: response.razorpay_signature,
           })});
-          document.getElementById('paywallOverlay').classList.remove('open');
+          document.getElementById(overlayId).classList.remove('open');
           toast('Payment successful — you are now on Pro!');
           refreshTokenStatus();
         } catch(e) {
           errorEl.textContent = "Payment went through but verification failed — contact support, don't pay again without checking with us first.";
         } finally {
-          btn.disabled = false; btn.textContent = '💳 Pay ₹299 & upgrade instantly';
+          btn.disabled = false; btn.textContent = originalText;
         }
       },
       modal: {
         ondismiss: function(){
-          btn.disabled = false; btn.textContent = '💳 Pay ₹299 & upgrade instantly';
+          btn.disabled = false; btn.textContent = originalText;
         }
       },
     });
     rzp.open();
   } catch(e) {
     errorEl.textContent = e.message || 'Could not start payment — please try again or use the manual options below';
-    btn.disabled = false; btn.textContent = '💳 Pay ₹299 & upgrade instantly';
+    btn.disabled = false; btn.textContent = originalText;
   }
 }
 
