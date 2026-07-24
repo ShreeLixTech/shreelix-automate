@@ -152,6 +152,17 @@ class InboundWebhook(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class SupportTicket(Base):
+    __tablename__ = "support_tickets"
+    id = Column(Integer, primary_key=True, index=True)
+    owner_token = Column(String, nullable=False, index=True)
+    business_name = Column(String, nullable=True)
+    email = Column(String, nullable=True)
+    message = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="open")  # "open", "resolved"
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 Base.metadata.create_all(bind=engine)
 
 # ---------------------------------------------------------------
@@ -356,6 +367,24 @@ class InboundWebhookOut(BaseModel):
     is_active: str
     trigger_count: int
     last_triggered_at: Optional[datetime]
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+
+class SupportTicketCreate(BaseModel):
+    owner_token: str
+    business_name: Optional[str] = None
+    email: Optional[str] = None
+    message: str
+
+
+class SupportTicketOut(BaseModel):
+    id: int
+    business_name: Optional[str]
+    email: Optional[str]
+    message: str
+    status: str
     created_at: datetime
     class Config:
         from_attributes = True
@@ -1255,6 +1284,85 @@ def send_message(payload: SendMessageRequest, db: Session = Depends(get_db)):
 @app.get("/logs", response_model=list[MessageLogOut])
 def list_message_logs(owner_token: str, db: Session = Depends(get_db)):
     return db.query(MessageLog).filter(MessageLog.owner_token == owner_token).order_by(MessageLog.id.desc()).limit(100).all()
+
+
+# ---- Support Tickets ----
+@app.post("/support-tickets", response_model=SupportTicketOut)
+def create_support_ticket(payload: SupportTicketCreate, db: Session = Depends(get_db)):
+    ticket = SupportTicket(
+        owner_token=payload.owner_token,
+        business_name=payload.business_name,
+        email=payload.email,
+        message=payload.message,
+    )
+    db.add(ticket)
+    db.commit()
+    db.refresh(ticket)
+    return ticket
+
+
+@app.get("/support-tickets", response_model=list[SupportTicketOut])
+def list_my_support_tickets(owner_token: str, db: Session = Depends(get_db)):
+    return db.query(SupportTicket).filter(SupportTicket.owner_token == owner_token).order_by(SupportTicket.id.desc()).all()
+
+
+@app.get("/admin/support-tickets", response_model=list[SupportTicketOut])
+def admin_list_support_tickets(key: str, db: Session = Depends(get_db)):
+    check_admin(key)
+    return db.query(SupportTicket).order_by(SupportTicket.id.desc()).all()
+
+
+@app.patch("/admin/support-tickets/{ticket_id}/resolve")
+def admin_resolve_ticket(ticket_id: int, key: str, db: Session = Depends(get_db)):
+    check_admin(key)
+    ticket = db.query(SupportTicket).filter(SupportTicket.id == ticket_id).first()
+    if not ticket:
+        raise HTTPException(status_code=404, detail="Ticket not found")
+    ticket.status = "resolved"
+    db.commit()
+    return {"status": "resolved"}
+
+
+@app.get("/dashboard/summary")
+def dashboard_summary(owner_token: str, db: Session = Depends(get_db)):
+    today_start = now_ist().replace(hour=0, minute=0, second=0, microsecond=0) - IST_OFFSET  # UTC equivalent of "today" in IST
+
+    total_connections = db.query(Connection).filter(Connection.owner_token == owner_token).count()
+
+    all_logs = db.query(MessageLog).filter(MessageLog.owner_token == owner_token)
+    total_sent = all_logs.filter(MessageLog.status == "sent").count()
+    total_failed = all_logs.filter(MessageLog.status == "failed").count()
+    sent_today = all_logs.filter(MessageLog.status == "sent", MessageLog.created_at >= today_start).count()
+
+    all_schedules = db.query(Schedule).filter(Schedule.owner_token == owner_token)
+    total_schedules = all_schedules.count()
+    active_schedules = all_schedules.filter(Schedule.is_active == "yes").count()
+    schedules_retrying = all_schedules.filter(Schedule.retry_count > 0).count()
+
+    all_hooks = db.query(InboundWebhook).filter(InboundWebhook.owner_token == owner_token)
+    total_inbound = all_hooks.count()
+    active_inbound = all_hooks.filter(InboundWebhook.is_active == "yes").count()
+    inbound_fires_total = db.query(InboundWebhook).filter(InboundWebhook.owner_token == owner_token).all()
+    total_inbound_triggers_fired = sum(h.trigger_count for h in inbound_fires_total)
+
+    recent_failures = all_logs.filter(MessageLog.status == "failed").order_by(MessageLog.id.desc()).limit(5).all()
+
+    return {
+        "total_connections": total_connections,
+        "total_sent": total_sent,
+        "total_failed": total_failed,
+        "sent_today": sent_today,
+        "total_schedules": total_schedules,
+        "active_schedules": active_schedules,
+        "schedules_currently_retrying": schedules_retrying,
+        "total_inbound_triggers": total_inbound,
+        "active_inbound_triggers": active_inbound,
+        "inbound_triggers_fired_total": total_inbound_triggers_fired,
+        "recent_failures": [
+            {"subject": l.subject, "connection_name": l.connection_name, "error": l.error, "created_at": l.created_at.isoformat()}
+            for l in recent_failures
+        ],
+    }
 
 
 # ==================== Scheduling ====================
