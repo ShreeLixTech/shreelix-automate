@@ -607,8 +607,11 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
       <div style="font-size:30px;font-weight:800;color:#fff;font-family:'Poppins',sans-serif;">₹299<span style="font-size:14px;font-weight:500;color:rgba(255,255,255,0.7);">/month</span></div>
       <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:4px;">Unlimited connections & messages</div>
     </div>
-    <a href="tel:+918840177216" style="display:block;background:var(--navy);color:#fff;padding:13px;border-radius:10px;font-weight:600;font-size:14.5px;margin-bottom:10px;">📞 Call +91 88401 77216</a>
-    <a href="https://wa.me/918840177216?text=Hi%2C%20I'd%20like%20to%20upgrade%20to%20ShreeLix%20Automate%20Pro" target="_blank" style="display:block;background:#25D366;color:#fff;padding:13px;border-radius:10px;font-weight:600;font-size:14.5px;margin-bottom:14px;">💬 WhatsApp us</a>
+    <button class="btn" id="razorpayPayBtn" onclick="startRazorpayPayment()" style="margin-bottom:10px;">💳 Pay ₹299 &amp; upgrade instantly</button>
+    <div id="paywallError" style="color:var(--red);font-size:12px;margin-bottom:10px;"></div>
+    <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px;">or, prefer to pay manually —</div>
+    <a href="tel:+918840177216" style="display:block;background:var(--navy);color:#fff;padding:11px;border-radius:10px;font-weight:600;font-size:13px;margin-bottom:8px;">📞 Call +91 88401 77216</a>
+    <a href="https://wa.me/918840177216?text=Hi%2C%20I'd%20like%20to%20upgrade%20to%20ShreeLix%20Automate%20Pro" target="_blank" style="display:block;background:#25D366;color:#fff;padding:11px;border-radius:10px;font-weight:600;font-size:13px;margin-bottom:14px;">💬 WhatsApp us</a>
     <button onclick="document.getElementById('paywallOverlay').classList.remove('open')" style="background:none;border:none;color:var(--muted);font-size:13px;cursor:pointer;">Close</button>
   </div>
 </div>
@@ -717,7 +720,7 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
     </div>
     <div class="faq-item">
       <div class="faq-q">What happens when my 100 free credits run out?</div>
-      <div class="faq-a">You'll see an upgrade screen. Every meaningful action — adding a connection, sending a message, creating a schedule — uses one credit. Check "View pricing" in the header anytime to see your options.</div>
+      <div class="faq-a">You'll see an upgrade screen where you can pay ₹299 instantly by card, UPI, or netbanking through Razorpay — your account upgrades automatically the moment payment completes, no waiting. Manual call/WhatsApp options are also available if you'd rather pay that way.</div>
     </div>
     <div class="faq-item">
       <div class="faq-q">Is there a limit to how many people I can bulk-send to at once?</div>
@@ -745,6 +748,7 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
 <div class="toast" id="toast"></div>
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <script>
 const API = "https://shreelix-automate-api.onrender.com";
 let connections = [];
@@ -963,6 +967,56 @@ async function consumeToken(){
       toast("Couldn't reach the server — please try again", true);
     }
     return false;
+  }
+}
+
+async function startRazorpayPayment(){
+  const errorEl = document.getElementById('paywallError');
+  errorEl.textContent = '';
+  if (!isSignedIn()) { errorEl.textContent = 'Please sign in first'; return; }
+
+  const btn = document.getElementById('razorpayPayBtn');
+  btn.disabled = true; btn.textContent = 'Loading…';
+
+  try {
+    const order = await api('/razorpay/create-order', {method:'POST', body: JSON.stringify({owner_token: USER_TOKEN})});
+
+    const rzp = new Razorpay({
+      key: order.key_id,
+      amount: order.amount,
+      currency: order.currency,
+      order_id: order.order_id,
+      name: 'ShreeLix Automate',
+      description: 'Pro subscription — 1 month',
+      theme: { color: '#1E90FF' },
+      handler: async function(response){
+        btn.textContent = 'Verifying payment…';
+        try {
+          await api('/razorpay/verify-payment', {method:'POST', body: JSON.stringify({
+            owner_token: USER_TOKEN,
+            razorpay_order_id: response.razorpay_order_id,
+            razorpay_payment_id: response.razorpay_payment_id,
+            razorpay_signature: response.razorpay_signature,
+          })});
+          document.getElementById('paywallOverlay').classList.remove('open');
+          toast('Payment successful — you are now on Pro!');
+          refreshTokenStatus();
+        } catch(e) {
+          errorEl.textContent = "Payment went through but verification failed — contact support, don't pay again without checking with us first.";
+        } finally {
+          btn.disabled = false; btn.textContent = '💳 Pay ₹299 & upgrade instantly';
+        }
+      },
+      modal: {
+        ondismiss: function(){
+          btn.disabled = false; btn.textContent = '💳 Pay ₹299 & upgrade instantly';
+        }
+      },
+    });
+    rzp.open();
+  } catch(e) {
+    errorEl.textContent = e.message || 'Could not start payment — please try again or use the manual options below';
+    btn.disabled = false; btn.textContent = '💳 Pay ₹299 & upgrade instantly';
   }
 }
 
