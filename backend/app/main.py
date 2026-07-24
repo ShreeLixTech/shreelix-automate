@@ -12,7 +12,7 @@ import requests as _requests
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, func
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 # Render's outbound network doesn't support IPv6 — some providers (like Gmail's SMTP)
@@ -424,6 +424,19 @@ class VerifyPaymentRequest(BaseModel):
     razorpay_signature: str
 
 
+class PaymentOut(BaseModel):
+    id: int
+    owner_token: str
+    razorpay_order_id: str
+    razorpay_payment_id: Optional[str]
+    amount: int
+    status: str
+    created_at: datetime
+    verified_at: Optional[datetime]
+    class Config:
+        from_attributes = True
+
+
 class SendMessageRequest(BaseModel):
     owner_token: str
     connection_id: int
@@ -628,6 +641,13 @@ def admin_summary(key: str, db: Session = Depends(get_db)):
     total_connections = db.query(Connection).count()
     total_messages = db.query(MessageLog).count()
     failed_messages = db.query(MessageLog).filter(MessageLog.status == "failed").count()
+    active_schedules = db.query(Schedule).filter(Schedule.is_active == "yes").count()
+    active_inbound = db.query(InboundWebhook).filter(InboundWebhook.is_active == "yes").count()
+    open_tickets = db.query(SupportTicket).filter(SupportTicket.status == "open").count()
+    verified_payments = db.query(Payment).filter(Payment.status == "verified").count()
+    total_revenue_paise = db.query(Payment).filter(Payment.status == "verified").with_entities(
+        func.coalesce(func.sum(Payment.amount), 0)
+    ).scalar()
     return {
         "total_users": total_users,
         "paid_users": paid_users,
@@ -635,6 +655,11 @@ def admin_summary(key: str, db: Session = Depends(get_db)):
         "total_connections": total_connections,
         "total_messages": total_messages,
         "failed_messages": failed_messages,
+        "active_schedules": active_schedules,
+        "active_inbound_triggers": active_inbound,
+        "open_support_tickets": open_tickets,
+        "verified_payments": verified_payments,
+        "total_revenue_rupees": (total_revenue_paise or 0) / 100,
     }
 
 
@@ -1359,6 +1384,12 @@ def admin_resolve_ticket(ticket_id: int, key: str, db: Session = Depends(get_db)
     ticket.status = "resolved"
     db.commit()
     return {"status": "resolved"}
+
+
+@app.get("/admin/payments", response_model=list[PaymentOut])
+def admin_list_payments(key: str, db: Session = Depends(get_db)):
+    check_admin(key)
+    return db.query(Payment).order_by(Payment.id.desc()).all()
 
 
 # ---- Razorpay Payments ----
