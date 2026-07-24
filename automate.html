@@ -394,6 +394,15 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
         </div>
         <label for="sched-time">Time (India time)</label>
         <input id="sched-time" type="time" value="09:00">
+
+        <div id="sched-single-only-extras" style="border-top:1px solid var(--border);margin-top:20px;padding-top:16px;">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+            <label style="margin:0;">Extra steps <span style="font-weight:400;color:var(--muted);">(optional — chain more actions after the one above)</span></label>
+          </div>
+          <div id="extraStepsWrap"></div>
+          <button type="button" class="btn secondary" onclick="addExtraStepBlock()" style="margin-top:10px;">+ Add another step</button>
+        </div>
+
         <button class="btn" id="createScheduleBtn" onclick="createSchedule()">Create schedule</button>
       </div>
       <div class="card">
@@ -1132,6 +1141,7 @@ function onSchedModeChange(){
   document.getElementById('sched-to-wrap').style.display = (mode === 'single') ? 'block' : 'none';
   document.getElementById('sched-bulk-wrap').style.display = (mode === 'single') ? 'none' : 'block';
   document.getElementById('sched-slides-wrap').style.display = (mode === 'bulk_document') ? 'block' : 'none';
+  document.getElementById('sched-single-only-extras').style.display = (mode === 'single') ? 'block' : 'none';
 }
 function onSchedFrequencyChange(){
   const freq = document.getElementById('sched-frequency').value;
@@ -1171,7 +1181,7 @@ async function createSchedule(){
   const btn = document.getElementById('createScheduleBtn');
   btn.disabled = true; btn.textContent = 'Creating…';
   try {
-    await api('/schedules', {method:'POST', body: JSON.stringify({
+    const newSchedule = await api('/schedules', {method:'POST', body: JSON.stringify({
       owner_token: USER_TOKEN, connection_id: parseInt(connId), name, mode,
       to_address: mode === 'single' ? (toAddress || null) : null,
       subject: subject || null, body,
@@ -1181,7 +1191,29 @@ async function createSchedule(){
       slides_template_id: mode === 'bulk_document' ? slidesTemplate : null,
       pdf_filename_template: mode === 'bulk_document' ? (pdfFilename || 'Document-{{name}}.pdf') : null,
     })});
-    toast('Schedule created');
+
+    // Submit any extra steps added inline, one after another, against the schedule we just created
+    const stepBlocks = document.querySelectorAll('#extraStepsWrap .extra-step-block');
+    let stepsAdded = 0, stepsFailed = 0;
+    for (const block of stepBlocks) {
+      const stepConnId = block.querySelector('.step-conn-select').value;
+      const stepConnType = block.querySelector('.step-conn-select').selectedOptions[0]?.dataset.type;
+      const stepTo = block.querySelector('.step-to-input').value.trim();
+      const stepSubject = block.querySelector('.step-subject-input').value.trim();
+      const stepBody = block.querySelector('.step-body-input').value.trim();
+      if (!stepConnId || !stepBody) continue; // skip incomplete blocks silently rather than blocking the whole schedule
+      try {
+        await api(`/schedules/${newSchedule.id}/steps`, {method:'POST', body: JSON.stringify({
+          owner_token: USER_TOKEN, connection_id: parseInt(stepConnId),
+          to_address: stepTo || null, subject: stepSubject || null, body: stepBody,
+        })});
+        stepsAdded++;
+      } catch(e) {
+        stepsFailed++;
+      }
+    }
+
+    toast(stepsAdded > 0 ? `Schedule created with ${stepsAdded} extra step(s)` : 'Schedule created');
     document.getElementById('sched-name').value = '';
     document.getElementById('sched-to').value = '';
     document.getElementById('sched-subject').value = '';
@@ -1189,12 +1221,46 @@ async function createSchedule(){
     document.getElementById('sched-sheet-url').value = '';
     document.getElementById('sched-email-column').value = '';
     document.getElementById('sched-slides-template').value = '';
+    document.getElementById('extraStepsWrap').innerHTML = '';
     loadSchedules();
   } catch(e) {
     toast(e.message, true);
   } finally {
     btn.disabled = false; btn.textContent = 'Create schedule';
   }
+}
+
+let extraStepCounter = 0;
+function addExtraStepBlock(){
+  extraStepCounter++;
+  const blockId = 'extra-step-' + extraStepCounter;
+  const connOptions = connections.map(c => `<option value="${c.id}" data-type="${c.conn_type}">${escapeHtml(c.name)} (${c.conn_type === 'gmail_api' || c.conn_type === 'google' ? 'gmail' : c.conn_type})</option>`).join('');
+
+  const block = document.createElement('div');
+  block.className = 'extra-step-block';
+  block.id = blockId;
+  block.style.cssText = 'border:1px solid var(--border);border-radius:10px;padding:14px;margin-top:10px;background:var(--bg);';
+  block.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <span style="font-size:12.5px;font-weight:700;color:var(--blue-deep);">Step ${document.querySelectorAll('#extraStepsWrap .extra-step-block').length + 2}</span>
+      <button type="button" onclick="document.getElementById('${blockId}').remove()" style="background:none;border:none;color:var(--red);font-size:12px;cursor:pointer;font-weight:600;">Remove</button>
+    </div>
+    <select class="step-conn-select" onchange="onExtraStepConnChange(this)">${connOptions}</select>
+    <div class="step-to-wrap" style="margin-top:10px;">
+      <input class="step-to-input" placeholder="To: recipient@example.com">
+    </div>
+    <input class="step-subject-input" placeholder="Subject (optional)" style="margin-top:10px;">
+    <textarea class="step-body-input" placeholder="Message for this step" style="margin-top:10px;min-height:70px;"></textarea>
+  `;
+  document.getElementById('extraStepsWrap').appendChild(block);
+  onExtraStepConnChange(block.querySelector('.step-conn-select'));
+}
+
+function onExtraStepConnChange(selectEl){
+  const type = selectEl.selectedOptions[0]?.dataset.type;
+  const block = selectEl.closest('.extra-step-block');
+  const toWrap = block.querySelector('.step-to-wrap');
+  toWrap.style.display = ['smtp', 'gmail_api', 'google', 'google_bulk'].includes(type) ? 'block' : 'none';
 }
 
 async function loadSchedules(){
