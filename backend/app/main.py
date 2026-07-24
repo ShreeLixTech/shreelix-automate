@@ -843,6 +843,18 @@ def delete_connection(connection_id: int, owner_token: str, db: Session = Depend
     conn = db.query(Connection).filter(Connection.id == connection_id, Connection.owner_token == owner_token).first()
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
+
+    # Schedules require a connection (can't be null) — block deletion rather than silently breaking them
+    dependent_schedules = db.query(Schedule).filter(Schedule.connection_id == connection_id).count()
+    if dependent_schedules > 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"This connection is used by {dependent_schedules} schedule(s). Delete or reassign those schedules first, then try again."
+        )
+
+    # History logs can safely be unlinked (they already store the connection's name as text)
+    db.query(MessageLog).filter(MessageLog.connection_id == connection_id).update({MessageLog.connection_id: None})
+
     db.delete(conn)
     db.commit()
     return {"status": "deleted"}
