@@ -607,6 +607,7 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
       <div style="font-size:30px;font-weight:800;color:#fff;font-family:'Poppins',sans-serif;">₹299<span style="font-size:14px;font-weight:500;color:rgba(255,255,255,0.7);">/month</span></div>
       <div style="font-size:12px;color:rgba(255,255,255,0.7);margin-top:4px;">Unlimited connections & messages</div>
     </div>
+    <div id="paywallProNote"></div>
     <button class="btn" id="razorpayPayBtn" onclick="startRazorpayPayment()" style="margin-bottom:10px;">💳 Pay ₹299 &amp; upgrade instantly</button>
     <div id="paywallError" style="color:var(--red);font-size:12px;margin-bottom:10px;"></div>
     <div style="font-size:11.5px;color:var(--muted);margin-bottom:14px;">or, prefer to pay manually —</div>
@@ -640,6 +641,7 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
         <li>Everything in Free, no limits</li>
         <li>Priority support</li>
       </ul>
+      <div id="pricingProNote"></div>
       <button class="btn" id="pricingPayBtn" onclick="startRazorpayPayment('pricingPayBtn','pricingPayError','pricingOverlay')" style="margin-top:0;">💳 Pay ₹299 &amp; upgrade now</button>
       <div id="pricingPayError" style="color:var(--red);font-size:12px;margin-top:8px;"></div>
     </div>
@@ -811,6 +813,8 @@ const GOOGLE_CLIENT_ID = "121520616317-h33rgmtjgvc1gd2i2dga9i2nnjlmhi9v.apps.goo
 let USER_TOKEN = localStorage.getItem('shreelix_automate_user_token') || null;
 let pendingCredential = null;
 let cachedTokensUsed = 0;
+let cachedSubscriptionStatus = 'free';
+let cachedSubscriptionExpiresAt = null;
 const FREE_TOKEN_LIMIT = 100;
 
 function isSignedIn(){ return !!USER_TOKEN; }
@@ -942,16 +946,42 @@ async function refreshTokenStatus(){
   try {
     const user = await api('/users/me?user_token=' + encodeURIComponent(USER_TOKEN));
     cachedTokensUsed = user.tokens_used;
+    cachedSubscriptionStatus = user.subscription_status;
+    cachedSubscriptionExpiresAt = user.subscription_expires_at;
     updateTokenBadge();
   } catch(e) {
     handlePossibleSessionExpiry(e.message);
   }
 }
 
+function isProActive(){
+  return cachedSubscriptionStatus === 'paid' && cachedSubscriptionExpiresAt && new Date(cachedSubscriptionExpiresAt) > new Date();
+}
+
 function updateTokenBadge(){
   const badge = document.getElementById('tokenBadge');
-  const left = Math.max(0, FREE_TOKEN_LIMIT - cachedTokensUsed);
-  if (badge) badge.textContent = left + ' free credits left';
+  if (!badge) return;
+  if (isProActive()){
+    const expiryDate = new Date(cachedSubscriptionExpiresAt).toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'});
+    badge.innerHTML = `✨ Pro — active until ${expiryDate}`;
+  } else {
+    const left = Math.max(0, FREE_TOKEN_LIMIT - cachedTokensUsed);
+    badge.textContent = left + ' free credits left';
+  }
+  updatePaymentButtonsVisibility();
+}
+
+function updatePaymentButtonsVisibility(){
+  const proActive = isProActive();
+  const paywallBtn = document.getElementById('razorpayPayBtn');
+  const pricingBtn = document.getElementById('pricingPayBtn');
+  const proNote = `<div style="text-align:center;color:var(--green);font-weight:600;font-size:13px;padding:10px;background:var(--green-bg);border-radius:10px;">✓ You're already on Pro</div>`;
+  if (paywallBtn) paywallBtn.style.display = proActive ? 'none' : 'flex';
+  if (pricingBtn) pricingBtn.style.display = proActive ? 'none' : 'flex';
+  const paywallProNote = document.getElementById('paywallProNote');
+  const pricingProNote = document.getElementById('pricingProNote');
+  if (paywallProNote) paywallProNote.innerHTML = proActive ? proNote : '';
+  if (pricingProNote) pricingProNote.innerHTML = proActive ? proNote : '';
 }
 
 async function consumeToken(){
@@ -959,6 +989,8 @@ async function consumeToken(){
   try {
     const user = await api('/users/track?user_token=' + encodeURIComponent(USER_TOKEN), {method:'POST'});
     cachedTokensUsed = user.tokens_used;
+    cachedSubscriptionStatus = user.subscription_status;
+    cachedSubscriptionExpiresAt = user.subscription_expires_at;
     updateTokenBadge();
     return true;
   } catch(e) {
@@ -1029,6 +1061,7 @@ async function startRazorpayPayment(btnId, errorId, overlayId){
 function openPricing(e){
   if (e) e.preventDefault();
   document.getElementById('pricingOverlay').classList.add('open');
+  refreshTokenStatus();
 }
 function openFaq(e){
   if (e) e.preventDefault();
