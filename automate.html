@@ -201,6 +201,7 @@
       <a href="#" onclick="openPricing(event)" style="display:block;margin-top:10px;font-size:12.5px;color:#7FC0FF;font-weight:600;">💳 View pricing</a>
       <div class="sidebar-footer-links">
         <a href="#" onclick="openFaq(event)">❓ Help &amp; FAQ</a>
+        <a href="#" onclick="openSupport(event)">💬 Contact Support</a>
         <a href="#" onclick="logoutUser(event)" id="logoutLink" style="display:none;">🚪 Log out</a>
         <a href="tel:+918840177216">📞 +91 88401 77216</a>
         <a href="index.html">← Back to website</a>
@@ -641,6 +642,23 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
   </div>
 </div>
 
+<!-- SUPPORT -->
+<div class="overlay" id="supportOverlay">
+  <div class="modal" style="max-width:480px;">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+      <h3 style="font-size:19px;">Contact Support</h3>
+      <button onclick="document.getElementById('supportOverlay').classList.remove('open')" style="background:none;border:none;font-size:22px;color:var(--muted);cursor:pointer;">&times;</button>
+    </div>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:18px;">Describe what you need help with — we'll get back to you. For anything urgent, call or WhatsApp <b>+91 88401 77216</b> directly instead.</p>
+    <label for="support-email">Your email (so we can reply)</label>
+    <input id="support-email" type="email" placeholder="you@example.com">
+    <label for="support-message">What do you need help with?</label>
+    <textarea id="support-message" placeholder="Describe the issue or question…" style="min-height:110px;"></textarea>
+    <div id="supportError" style="color:var(--red);font-size:12.5px;margin-top:8px;"></div>
+    <button class="btn" id="submitSupportBtn" onclick="submitSupportTicket()">Send message</button>
+  </div>
+</div>
+
 <!-- HELP & FAQ -->
 <!-- WORKFLOW STEPS -->
 <div class="overlay" id="stepsOverlay">
@@ -707,7 +725,7 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
     </div>
     <div class="faq-item">
       <div class="faq-q">Still stuck?</div>
-      <div class="faq-a">Call or WhatsApp us directly: <b>+91 88401 77216</b>, or email <b>support.shreelix@gmail.com</b>.</div>
+      <div class="faq-a">Use "💬 Contact Support" in the sidebar to send us a message directly, call or WhatsApp <b>+91 88401 77216</b>, or email <b>support.shreelix@gmail.com</b>.</div>
     </div>
   </div>
 </div>
@@ -955,6 +973,36 @@ function openPricing(e){
 function openFaq(e){
   if (e) e.preventDefault();
   document.getElementById('faqOverlay').classList.add('open');
+}
+
+function openSupport(e){
+  if (e) e.preventDefault();
+  document.getElementById('supportError').textContent = '';
+  document.getElementById('supportOverlay').classList.add('open');
+}
+
+async function submitSupportTicket(){
+  const email = document.getElementById('support-email').value.trim();
+  const message = document.getElementById('support-message').value.trim();
+  const errorEl = document.getElementById('supportError');
+  if (!message) { errorEl.textContent = 'Please describe what you need help with'; return; }
+
+  const btn = document.getElementById('submitSupportBtn');
+  btn.disabled = true; btn.textContent = 'Sending…';
+  try {
+    await api('/support-tickets', {method:'POST', body: JSON.stringify({
+      owner_token: USER_TOKEN || 'anonymous',
+      business_name: null, email: email || null, message,
+    })});
+    document.getElementById('supportOverlay').classList.remove('open');
+    document.getElementById('support-email').value = '';
+    document.getElementById('support-message').value = '';
+    toast("Message sent — we'll get back to you soon");
+  } catch(e) {
+    errorEl.textContent = e.message || "Couldn't send — please try again or call us directly";
+  } finally {
+    btn.disabled = false; btn.textContent = 'Send message';
+  }
 }
 
 function fillTwilioPreset(e){
