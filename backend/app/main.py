@@ -457,6 +457,17 @@ class MessageLogOut(BaseModel):
         from_attributes = True
 
 
+class AdminErrorOut(BaseModel):
+    id: int
+    business_name: Optional[str]
+    email: Optional[str]
+    owner_token: str
+    connection_name: Optional[str]
+    subject: Optional[str]
+    error: Optional[str]
+    created_at: datetime
+
+
 # ---------------------------------------------------------------
 # App
 # ---------------------------------------------------------------
@@ -661,7 +672,6 @@ def admin_summary(key: str, db: Session = Depends(get_db)):
         "verified_payments": verified_payments,
         "total_revenue_rupees": (total_revenue_paise or 0) / 100,
     }
-
 
 # ---------------------------------------------------------------
 # Connections
@@ -1390,6 +1400,28 @@ def admin_resolve_ticket(ticket_id: int, key: str, db: Session = Depends(get_db)
 def admin_list_payments(key: str, db: Session = Depends(get_db)):
     check_admin(key)
     return db.query(Payment).order_by(Payment.id.desc()).all()
+
+
+@app.get("/admin/errors", response_model=list[AdminErrorOut])
+def admin_list_errors(key: str, db: Session = Depends(get_db)):
+    """Every failed send across every user, with business context attached, so problems can be
+    spotted proactively instead of waiting for someone to complain."""
+    check_admin(key)
+    failed_logs = db.query(MessageLog).filter(MessageLog.status == "failed").order_by(MessageLog.id.desc()).limit(200).all()
+    results = []
+    for log in failed_logs:
+        user = db.query(AppUser).filter(AppUser.user_token == log.owner_token).first()
+        results.append(AdminErrorOut(
+            id=log.id,
+            business_name=user.business_name if user else None,
+            email=user.email if user else None,
+            owner_token=log.owner_token,
+            connection_name=log.connection_name,
+            subject=log.subject,
+            error=log.error,
+            created_at=log.created_at,
+        ))
+    return results
 
 
 # ---- Razorpay Payments ----
