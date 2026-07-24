@@ -1,0 +1,389 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ShreeLix Automate — Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@500;600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --navy:#0B1F3A; --navy-soft:#132A4D; --navy-deep:#081527; --blue:#1E90FF; --blue-deep:#0B5FCC; --blue-light:#EAF2FF;
+    --amber:#F59E0B; --purple:#7C5CFC;
+    --bg:#F5F7FA; --card:#FFFFFF; --text:#1A2540;
+    --muted:#64748B; --muted-soft:#94A3B8; --border:#E7EBF1; --green:#0E9A5B; --green-bg:#E5FAF0;
+    --red:#DC3545; --red-bg:#FDECEC;
+    --sidebar-w:240px;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);line-height:1.55;font-size:14.5px;-webkit-font-smoothing:antialiased;}
+  h1,h2,h3{font-family:'Poppins',sans-serif;color:var(--navy);letter-spacing:-0.01em;}
+  a{color:inherit;text-decoration:none;}
+  code{font-family:'SF Mono',Consolas,monospace;}
+
+  .app-shell{display:flex;min-height:100vh;}
+  .sidebar{width:var(--sidebar-w);flex-shrink:0;background:linear-gradient(180deg,var(--navy) 0%,var(--navy-deep) 100%);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;box-shadow:2px 0 16px rgba(0,0,0,0.12);}
+  .sidebar-brand{display:flex;align-items:center;gap:11px;padding:22px 20px 18px;font-family:'Poppins',sans-serif;font-weight:700;font-size:16px;color:#fff;}
+  .sidebar-brand .mark{width:30px;height:30px;border-radius:8px;background:linear-gradient(135deg,var(--blue),var(--purple));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:14px;}
+  .sidebar-product{font-size:10px;font-weight:600;color:rgba(255,255,255,0.4);text-transform:uppercase;letter-spacing:0.08em;padding:0 20px 12px;}
+  .sidebar-nav{flex:1;padding:4px 10px;}
+  .sidebar-nav .tab{display:flex;align-items:center;gap:10px;padding:10px 13px;border-radius:9px;color:rgba(255,255,255,0.6);font-size:13px;font-weight:500;cursor:pointer;margin-bottom:2px;transition:background .15s ease,color .15s ease;}
+  .sidebar-nav .tab:hover{background:rgba(255,255,255,0.06);color:rgba(255,255,255,0.9);}
+  .sidebar-nav .tab.active{background:rgba(30,144,255,0.18);color:#fff;font-weight:600;}
+  .sidebar-nav .tab .badge-count{margin-left:auto;background:var(--red);color:#fff;font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:999px;}
+  .nav-icon{width:16px;flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;opacity:0.85;}
+  .sidebar-footer{padding:14px 20px 20px;border-top:1px solid rgba(255,255,255,0.08);}
+  .sidebar-footer a{display:flex;align-items:center;gap:9px;font-size:12px;color:rgba(255,255,255,0.55);}
+  .sidebar-footer a:hover{color:#fff;}
+
+  .main-content{flex:1;min-width:0;display:flex;flex-direction:column;}
+  .content-topbar{background:#fff;border-bottom:1px solid var(--border);padding:20px 32px;}
+  .content-topbar h1{font-size:20px;}
+  .content-body{padding:28px 32px 60px;flex:1;}
+  .panel{display:none;}
+  .panel.active{display:block;}
+
+  .stat-grid{display:grid;grid-template-columns:repeat(5,1fr);gap:14px;margin-bottom:24px;}
+  @media(max-width:1100px){.stat-grid{grid-template-columns:repeat(3,1fr);}}
+  @media(max-width:640px){.stat-grid{grid-template-columns:1fr 1fr;}}
+  .stat-card{background:#fff;border:1px solid var(--border);border-radius:13px;padding:16px 16px 14px;box-shadow:0 1px 2px rgba(11,31,58,0.03),0 4px 14px rgba(11,31,58,0.04);}
+  .stat-card .slabel{font-size:10.5px;font-weight:600;color:var(--muted-soft);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:7px;}
+  .stat-card .svalue{font-size:24px;font-weight:700;color:var(--navy);font-family:'Poppins',sans-serif;letter-spacing:-0.02em;}
+
+  .card{background:#fff;border:1px solid var(--border);border-radius:14px;padding:22px;box-shadow:0 1px 2px rgba(11,31,58,0.03),0 6px 20px rgba(11,31,58,0.04);}
+  .card h3{font-size:15.5px;margin-bottom:16px;}
+
+  table{width:100%;border-collapse:collapse;font-size:13.5px;}
+  th{text-align:left;font-size:11px;text-transform:uppercase;letter-spacing:0.03em;color:var(--muted-soft);padding:9px 10px;border-bottom:1px solid var(--border);}
+  td{padding:11px 10px;border-bottom:1px solid var(--border);}
+  tr:last-child td{border-bottom:none;}
+  tr:hover td{background:var(--bg);}
+  .empty{padding:32px 20px;text-align:center;color:var(--muted);font-size:13.5px;}
+
+  .badge{display:inline-flex;align-items:center;gap:5px;font-size:11px;font-weight:600;padding:3px 9px;border-radius:999px;}
+  .badge.paid,.badge.verified,.badge.resolved{background:var(--green-bg);color:var(--green);}
+  .badge.free,.badge.open{background:#FFF3E0;color:#B8720C;}
+  .badge.signature_failed,.badge.failed{background:var(--red-bg);color:var(--red);}
+  .badge.created{background:var(--blue-light);color:var(--blue-deep);}
+
+  .btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;background:linear-gradient(135deg,var(--blue),var(--blue-deep));color:#fff;padding:8px 14px;border-radius:8px;font-weight:600;font-size:12.5px;border:none;cursor:pointer;box-shadow:0 2px 6px rgba(30,144,255,0.25);}
+  .btn:hover{transform:translateY(-1px);}
+  .btn.secondary{background:transparent;border:1.5px solid var(--border);color:var(--navy);box-shadow:none;}
+  .btn:disabled{opacity:0.5;cursor:not-allowed;transform:none;}
+
+  input{width:100%;padding:11px 13px;border:1.5px solid var(--border);border-radius:9px;font-family:'Inter',sans-serif;font-size:13.5px;}
+  input:focus{outline:none;border-color:var(--blue);box-shadow:0 0 0 3px rgba(30,144,255,0.12);}
+  label{display:block;font-size:12.5px;font-weight:600;color:var(--navy);margin-bottom:6px;}
+
+  .login-screen{min-height:100vh;display:flex;align-items:center;justify-content:center;background:var(--bg);}
+  .login-card{background:#fff;border-radius:16px;padding:36px;max-width:380px;width:100%;box-shadow:0 8px 32px rgba(11,31,58,0.1);text-align:center;}
+  .login-card .mark{width:48px;height:48px;border-radius:12px;background:linear-gradient(135deg,var(--blue),var(--purple));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:20px;margin:0 auto 16px;}
+
+  .toast{position:fixed;bottom:24px;left:50%;transform:translateX(-50%) translateY(120%);background:var(--navy);color:#fff;padding:12px 22px;border-radius:10px;font-size:13.5px;font-weight:500;transition:transform .25s ease;z-index:100;}
+  .toast.show{transform:translateX(-50%) translateY(0);}
+  .toast.error{background:var(--red);}
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div class="login-screen" id="loginScreen">
+  <div class="login-card">
+    <div class="mark">S</div>
+    <h1 style="font-size:19px;margin-bottom:6px;">Automate Admin</h1>
+    <p style="font-size:13px;color:var(--muted);margin-bottom:20px;">Enter your admin key to continue</p>
+    <label for="adminKeyInput" style="text-align:left;">Admin key</label>
+    <input id="adminKeyInput" type="password" placeholder="Your ADMIN_KEY">
+    <div id="loginError" style="color:var(--red);font-size:12px;margin-top:8px;"></div>
+    <button class="btn" style="width:100%;margin-top:14px;padding:11px;" onclick="attemptLogin()">Sign in</button>
+  </div>
+</div>
+
+<!-- APP -->
+<div class="app-shell" id="appShell" style="display:none;">
+  <aside class="sidebar">
+    <div class="sidebar-brand"><span class="mark">S</span> ShreeLix</div>
+    <div class="sidebar-product">Automate Admin</div>
+    <nav class="sidebar-nav">
+      <div class="tab active" data-tab="overview"><span class="nav-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9"/><rect x="14" y="3" width="7" height="5"/><rect x="14" y="12" width="7" height="9"/><rect x="3" y="16" width="7" height="5"/></svg></span> Overview</div>
+      <div class="tab" data-tab="users"><span class="nav-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg></span> Users</div>
+      <div class="tab" data-tab="tickets"><span class="nav-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg></span> Support Tickets <span class="badge-count" id="ticketBadge" style="display:none;"></span></div>
+      <div class="tab" data-tab="payments"><span class="nav-icon"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="5" width="20" height="14" rx="2"/><line x1="2" y1="10" x2="22" y2="10"/></svg></span> Payments</div>
+    </nav>
+    <div class="sidebar-footer">
+      <a href="#" onclick="logoutAdmin(event)">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+        Log out
+      </a>
+    </div>
+  </aside>
+
+  <main class="main-content">
+    <div class="content-topbar"><h1 id="pageTitle">Overview</h1></div>
+    <div class="content-body">
+
+      <!-- OVERVIEW -->
+      <div class="panel active" id="panel-overview">
+        <div class="stat-grid" id="statGrid">
+          <div class="stat-card"><div class="slabel">Total Users</div><div class="svalue" id="statTotalUsers">–</div></div>
+          <div class="stat-card"><div class="slabel">Paid Users</div><div class="svalue" id="statPaidUsers">–</div></div>
+          <div class="stat-card"><div class="slabel">Total Revenue</div><div class="svalue" id="statRevenue">–</div></div>
+          <div class="stat-card"><div class="slabel">Active Schedules</div><div class="svalue" id="statSchedules">–</div></div>
+          <div class="stat-card"><div class="slabel">Open Tickets</div><div class="svalue" id="statOpenTickets">–</div></div>
+          <div class="stat-card"><div class="slabel">Total Connections</div><div class="svalue" id="statConnections">–</div></div>
+          <div class="stat-card"><div class="slabel">Messages Sent</div><div class="svalue" id="statMessages">–</div></div>
+          <div class="stat-card"><div class="slabel">Failed Sends</div><div class="svalue" id="statFailed">–</div></div>
+          <div class="stat-card"><div class="slabel">Inbound Triggers</div><div class="svalue" id="statInbound">–</div></div>
+          <div class="stat-card"><div class="slabel">Verified Payments</div><div class="svalue" id="statPayments">–</div></div>
+        </div>
+      </div>
+
+      <!-- USERS -->
+      <div class="panel" id="panel-users">
+        <div class="card">
+          <h3>All Users</h3>
+          <div id="usersWrap"><div class="empty">Loading…</div></div>
+        </div>
+      </div>
+
+      <!-- TICKETS -->
+      <div class="panel" id="panel-tickets">
+        <div class="card">
+          <h3>Support Tickets</h3>
+          <div id="ticketsWrap"><div class="empty">Loading…</div></div>
+        </div>
+      </div>
+
+      <!-- PAYMENTS -->
+      <div class="panel" id="panel-payments">
+        <div class="card">
+          <h3>Payment History</h3>
+          <div id="paymentsWrap"><div class="empty">Loading…</div></div>
+        </div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const API = "https://shreelix-automate-api.onrender.com";
+let ADMIN_KEY = sessionStorage.getItem('shreelix_automate_admin_key') || null;
+
+function toast(msg, isError=false){
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.className = 'toast show' + (isError ? ' error' : '');
+  setTimeout(()=> t.className = 'toast', 2800);
+}
+function escapeHtml(str){
+  const d = document.createElement('div');
+  d.textContent = str || '';
+  return d.innerHTML;
+}
+async function adminApi(path, opts={}){
+  const separator = path.includes('?') ? '&' : '?';
+  const res = await fetch(API + path + separator + 'key=' + encodeURIComponent(ADMIN_KEY), {
+    headers:{'Content-Type':'application/json'}, ...opts
+  });
+  if (!res.ok){
+    const err = await res.json().catch(()=>({detail:'Request failed'}));
+    throw new Error(err.detail || 'Request failed');
+  }
+  return res.json();
+}
+
+async function attemptLogin(){
+  const key = document.getElementById('adminKeyInput').value.trim();
+  const errorEl = document.getElementById('loginError');
+  errorEl.textContent = '';
+  if (!key) { errorEl.textContent = 'Enter your admin key'; return; }
+  ADMIN_KEY = key;
+  try {
+    await adminApi('/admin/summary');
+    sessionStorage.setItem('shreelix_automate_admin_key', key);
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('appShell').style.display = 'flex';
+    loadOverview();
+  } catch(e) {
+    ADMIN_KEY = null;
+    errorEl.textContent = 'Invalid admin key';
+  }
+}
+function logoutAdmin(e){
+  if (e) e.preventDefault();
+  sessionStorage.removeItem('shreelix_automate_admin_key');
+  ADMIN_KEY = null;
+  document.getElementById('appShell').style.display = 'none';
+  document.getElementById('loginScreen').style.display = 'flex';
+}
+
+// ---------- Tabs ----------
+document.querySelectorAll('.sidebar-nav .tab').forEach(tab => {
+  tab.addEventListener('click', () => {
+    document.querySelectorAll('.sidebar-nav .tab').forEach(t=>t.classList.remove('active'));
+    document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+    tab.classList.add('active');
+    document.getElementById('panel-'+tab.dataset.tab).classList.add('active');
+    const titles = {overview:'Overview', users:'Users', tickets:'Support Tickets', payments:'Payments'};
+    document.getElementById('pageTitle').textContent = titles[tab.dataset.tab];
+    if (tab.dataset.tab === 'users') loadUsers();
+    if (tab.dataset.tab === 'tickets') loadTickets();
+    if (tab.dataset.tab === 'payments') loadPayments();
+  });
+});
+
+// ---------- Overview ----------
+async function loadOverview(){
+  try {
+    const s = await adminApi('/admin/summary');
+    document.getElementById('statTotalUsers').textContent = s.total_users;
+    document.getElementById('statPaidUsers').textContent = s.paid_users;
+    document.getElementById('statRevenue').textContent = '₹' + s.total_revenue_rupees.toLocaleString('en-IN');
+    document.getElementById('statSchedules').textContent = s.active_schedules;
+    document.getElementById('statOpenTickets').textContent = s.open_support_tickets;
+    document.getElementById('statConnections').textContent = s.total_connections;
+    document.getElementById('statMessages').textContent = s.total_messages;
+    document.getElementById('statFailed').textContent = s.failed_messages;
+    document.getElementById('statInbound').textContent = s.active_inbound_triggers;
+    document.getElementById('statPayments').textContent = s.verified_payments;
+
+    const ticketBadge = document.getElementById('ticketBadge');
+    if (s.open_support_tickets > 0) {
+      ticketBadge.textContent = s.open_support_tickets;
+      ticketBadge.style.display = 'inline-block';
+    } else {
+      ticketBadge.style.display = 'none';
+    }
+  } catch(e) {
+    toast("Couldn't load overview", true);
+  }
+}
+
+// ---------- Users ----------
+async function loadUsers(){
+  const wrap = document.getElementById('usersWrap');
+  try {
+    const users = await adminApi('/admin/users');
+    if (users.length === 0) {
+      wrap.innerHTML = `<div class="empty">No users yet.</div>`;
+      return;
+    }
+    wrap.innerHTML = `<table>
+      <thead><tr><th>Business</th><th>Email</th><th>Status</th><th>Expires</th><th>Tokens Used</th><th>Actions</th></tr></thead>
+      <tbody>${users.map(u => `
+        <tr>
+          <td>${escapeHtml(u.business_name)}</td>
+          <td style="color:var(--muted);">${escapeHtml(u.email || '—')}</td>
+          <td><span class="badge ${u.subscription_status}">${u.subscription_status}</span></td>
+          <td style="color:var(--muted);font-size:12.5px;">${u.subscription_expires_at ? new Date(u.subscription_expires_at).toLocaleDateString('en-IN') : '—'}</td>
+          <td>${u.tokens_used}</td>
+          <td style="white-space:nowrap;">
+            <button class="btn secondary" onclick="markUserPaid(${u.id})">Mark Paid</button>
+            <button class="btn secondary" onclick="renewUser(${u.id})">Renew +30d</button>
+            <button class="btn secondary" onclick="markUserFree(${u.id})">Mark Free</button>
+          </td>
+        </tr>
+      `).join('')}</tbody>
+    </table>`;
+  } catch(e) {
+    wrap.innerHTML = `<div class="empty">Couldn't load users.</div>`;
+  }
+}
+async function markUserPaid(id){
+  try {
+    await adminApi(`/admin/users/${id}/subscription`, {method:'PATCH', body: JSON.stringify({subscription_status:'paid'})});
+    toast('Marked as Paid'); loadUsers(); loadOverview();
+  } catch(e) { toast(e.message, true); }
+}
+async function markUserFree(id){
+  try {
+    await adminApi(`/admin/users/${id}/subscription`, {method:'PATCH', body: JSON.stringify({subscription_status:'free'})});
+    toast('Marked as Free'); loadUsers(); loadOverview();
+  } catch(e) { toast(e.message, true); }
+}
+async function renewUser(id){
+  try {
+    await adminApi(`/admin/users/${id}/renew`, {method:'POST'});
+    toast('Renewed +30 days'); loadUsers(); loadOverview();
+  } catch(e) { toast(e.message, true); }
+}
+
+// ---------- Support Tickets ----------
+async function loadTickets(){
+  const wrap = document.getElementById('ticketsWrap');
+  try {
+    const tickets = await adminApi('/admin/support-tickets');
+    if (tickets.length === 0) {
+      wrap.innerHTML = `<div class="empty">No support tickets.</div>`;
+      return;
+    }
+    wrap.innerHTML = tickets.map(t => `
+      <div style="border:1px solid var(--border);border-radius:10px;padding:14px 16px;margin-bottom:10px;">
+        <div style="display:flex;justify-content:space-between;align-items:flex-start;gap:12px;">
+          <div>
+            <span class="badge ${t.status}">${t.status}</span>
+            <span style="font-size:12px;color:var(--muted);margin-left:8px;">${escapeHtml(t.email || 'No email given')} · ${new Date(t.created_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'})}</span>
+          </div>
+          ${t.status === 'open' ? `<button class="btn" onclick="resolveTicket(${t.id})">Mark Resolved</button>` : ''}
+        </div>
+        <div style="margin-top:8px;font-size:13.5px;">${escapeHtml(t.message)}</div>
+      </div>
+    `).join('');
+  } catch(e) {
+    wrap.innerHTML = `<div class="empty">Couldn't load tickets.</div>`;
+  }
+}
+async function resolveTicket(id){
+  try {
+    await adminApi(`/admin/support-tickets/${id}/resolve`, {method:'PATCH'});
+    toast('Ticket resolved'); loadTickets(); loadOverview();
+  } catch(e) { toast(e.message, true); }
+}
+
+// ---------- Payments ----------
+async function loadPayments(){
+  const wrap = document.getElementById('paymentsWrap');
+  try {
+    const payments = await adminApi('/admin/payments');
+    if (payments.length === 0) {
+      wrap.innerHTML = `<div class="empty">No payments yet.</div>`;
+      return;
+    }
+    wrap.innerHTML = `<table>
+      <thead><tr><th>Order ID</th><th>Payment ID</th><th>Amount</th><th>Status</th><th>Created</th></tr></thead>
+      <tbody>${payments.map(p => `
+        <tr>
+          <td style="font-size:12px;color:var(--muted);">${escapeHtml(p.razorpay_order_id)}</td>
+          <td style="font-size:12px;color:var(--muted);">${escapeHtml(p.razorpay_payment_id || '—')}</td>
+          <td>₹${(p.amount/100).toLocaleString('en-IN')}</td>
+          <td><span class="badge ${p.status}">${p.status}</span></td>
+          <td style="font-size:12.5px;color:var(--muted);">${new Date(p.created_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'})}</td>
+        </tr>
+      `).join('')}</tbody>
+    </table>`;
+  } catch(e) {
+    wrap.innerHTML = `<div class="empty">Couldn't load payments.</div>`;
+  }
+}
+
+// ---------- Init ----------
+if (ADMIN_KEY) {
+  adminApi('/admin/summary').then(() => {
+    document.getElementById('loginScreen').style.display = 'none';
+    document.getElementById('appShell').style.display = 'flex';
+    loadOverview();
+  }).catch(() => {
+    ADMIN_KEY = null;
+    sessionStorage.removeItem('shreelix_automate_admin_key');
+  });
+}
+document.getElementById('adminKeyInput').addEventListener('keypress', (e) => {
+  if (e.key === 'Enter') attemptLogin();
+});
+</script>
+
+</body>
+</html>
