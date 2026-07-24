@@ -110,6 +110,20 @@ class Schedule(Base):
     pdf_filename_template = Column(String, nullable=True)
 
 
+class WorkflowStep(Base):
+    """Additional steps chained after a schedule's primary action (its own connection_id/to_address/
+    subject/body count as 'Step 1' automatically). Only supported for mode='single' schedules."""
+    __tablename__ = "workflow_steps"
+    id = Column(Integer, primary_key=True, index=True)
+    schedule_id = Column(Integer, ForeignKey("schedules.id"), nullable=False)
+    step_order = Column(Integer, nullable=False, default=1)  # 2, 3, 4... (1 is the schedule's own primary action)
+    connection_id = Column(Integer, ForeignKey("connections.id"), nullable=False)
+    to_address = Column(String, nullable=True)
+    subject = Column(String, nullable=True)
+    body = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 Base.metadata.create_all(bind=engine)
 
 # ---------------------------------------------------------------
@@ -251,6 +265,27 @@ class ScheduleOut(BaseModel):
 class ScheduleToggle(BaseModel):
     owner_token: str
     is_active: bool
+
+
+class WorkflowStepCreate(BaseModel):
+    owner_token: str
+    connection_id: int
+    to_address: Optional[str] = None
+    subject: Optional[str] = None
+    body: str
+
+
+class WorkflowStepOut(BaseModel):
+    id: int
+    schedule_id: int
+    step_order: int
+    connection_id: int
+    to_address: Optional[str]
+    subject: Optional[str]
+    body: str
+    created_at: datetime
+    class Config:
+        from_attributes = True
 
 
 class SendMessageRequest(BaseModel):
@@ -1156,11 +1191,61 @@ def toggle_schedule(schedule_id: int, payload: ScheduleToggle, db: Session = Dep
     return schedule
 
 
+@app.post("/schedules/{schedule_id}/steps", response_model=WorkflowStepOut)
+def add_workflow_step(schedule_id: int, payload: WorkflowStepCreate, db: Session = Depends(get_db)):
+    schedule = db.query(Schedule).filter(Schedule.id == schedule_id, Schedule.owner_token == payload.owner_token).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    if schedule.mode != "single":
+        raise HTTPException(status_code=400, detail="Multi-step workflows are only supported for 'single recipient' schedules right now")
+    conn = db.query(Connection).filter(Connection.id == payload.connection_id, Connection.owner_token == payload.owner_token).first()
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    if conn.conn_type in {"smtp", "gmail_api", "google"} and not payload.to_address:
+        raise HTTPException(status_code=400, detail="An email address to send to is required for this connection type")
+
+    existing_count = db.query(WorkflowStep).filter(WorkflowStep.schedule_id == schedule_id).count()
+    db_step = WorkflowStep(
+        schedule_id=schedule_id,
+        step_order=existing_count + 2,  # step 1 is the schedule's own primary action
+        connection_id=payload.connection_id,
+        to_address=payload.to_address,
+        subject=payload.subject,
+        body=payload.body,
+    )
+    db.add(db_step)
+    db.commit()
+    db.refresh(db_step)
+    return db_step
+
+
+@app.get("/schedules/{schedule_id}/steps", response_model=list[WorkflowStepOut])
+def list_workflow_steps(schedule_id: int, owner_token: str, db: Session = Depends(get_db)):
+    schedule = db.query(Schedule).filter(Schedule.id == schedule_id, Schedule.owner_token == owner_token).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return db.query(WorkflowStep).filter(WorkflowStep.schedule_id == schedule_id).order_by(WorkflowStep.step_order).all()
+
+
+@app.delete("/schedules/{schedule_id}/steps/{step_id}")
+def delete_workflow_step(schedule_id: int, step_id: int, owner_token: str, db: Session = Depends(get_db)):
+    schedule = db.query(Schedule).filter(Schedule.id == schedule_id, Schedule.owner_token == owner_token).first()
+    if not schedule:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    step = db.query(WorkflowStep).filter(WorkflowStep.id == step_id, WorkflowStep.schedule_id == schedule_id).first()
+    if not step:
+        raise HTTPException(status_code=404, detail="Step not found")
+    db.delete(step)
+    db.commit()
+    return {"status": "deleted"}
+
+
 @app.delete("/schedules/{schedule_id}")
 def delete_schedule(schedule_id: int, owner_token: str, db: Session = Depends(get_db)):
     schedule = db.query(Schedule).filter(Schedule.id == schedule_id, Schedule.owner_token == owner_token).first()
     if not schedule:
         raise HTTPException(status_code=404, detail="Schedule not found")
+    db.query(WorkflowStep).filter(WorkflowStep.schedule_id == schedule_id).delete()
     db.delete(schedule)
     db.commit()
     return {"status": "deleted"}
@@ -1201,6 +1286,27 @@ def is_schedule_due(schedule: Schedule, current: datetime) -> bool:
     return False
 
 
+def execute_single_send(db: Session, owner_token: str, conn: Connection, subject: str, body: str, to_address: Optional[str]):
+    """Sends one message through one connection and logs the result. Raises on failure (caller decides how to handle it)."""
+    config = _json.loads(conn.config)
+    if conn.conn_type == "smtp":
+        send_via_smtp(config, subject or "", body, to_address)
+    elif conn.conn_type in {"gmail_api", "google", "google_bulk"}:
+        send_via_gmail_api(config, subject or "", body, to_address)
+    elif conn.conn_type == "webhook":
+        send_via_webhook(config, subject or "", body)
+    elif conn.conn_type == "http":
+        send_via_http(config, subject or "", body)
+    else:
+        raise ValueError(f"Unknown connection type: {conn.conn_type}")
+
+    db.add(MessageLog(
+        owner_token=owner_token, connection_id=conn.id, connection_name=conn.name,
+        subject=subject, body_preview=(body[:120] + "...") if len(body) > 120 else body,
+        status="sent",
+    ))
+
+
 @app.post("/schedules/run-due")
 @app.get("/schedules/run-due")
 def run_due_schedules(db: Session = Depends(get_db)):
@@ -1235,22 +1341,26 @@ def run_due_schedules(db: Session = Depends(get_db)):
                 results["ran"] += 1
                 results["errors"].extend(bulk_result.get("errors", []))
             else:
-                config = _json.loads(conn.config)
-                if conn.conn_type == "smtp":
-                    send_via_smtp(config, schedule.subject or "", schedule.body, schedule.to_address)
-                elif conn.conn_type == "gmail_api":
-                    send_via_gmail_api(config, schedule.subject or "", schedule.body, schedule.to_address)
-                elif conn.conn_type == "webhook":
-                    send_via_webhook(config, schedule.subject or "", schedule.body)
-                elif conn.conn_type == "http":
-                    send_via_http(config, schedule.subject or "", schedule.body)
-
+                # Step 1: the schedule's own primary action
+                execute_single_send(db, schedule.owner_token, conn, schedule.subject, schedule.body, schedule.to_address)
                 results["ran"] += 1
-                db.add(MessageLog(
-                    owner_token=schedule.owner_token, connection_id=conn.id, connection_name=conn.name,
-                    subject=schedule.subject, body_preview=(schedule.body[:120] + "...") if len(schedule.body) > 120 else schedule.body,
-                    status="sent",
-                ))
+
+                # Steps 2, 3, 4...: additional chained actions, each independent — one failing doesn't stop the rest
+                steps = db.query(WorkflowStep).filter(WorkflowStep.schedule_id == schedule.id).order_by(WorkflowStep.step_order).all()
+                for step in steps:
+                    step_conn = db.query(Connection).filter(Connection.id == step.connection_id).first()
+                    if not step_conn:
+                        results["errors"].append(f"Schedule '{schedule.name}' step {step.step_order}: connection no longer exists")
+                        continue
+                    try:
+                        execute_single_send(db, schedule.owner_token, step_conn, step.subject, step.body, step.to_address)
+                    except Exception as step_error:
+                        results["errors"].append(f"Schedule '{schedule.name}' step {step.step_order}: {str(step_error)[:150]}")
+                        db.add(MessageLog(
+                            owner_token=schedule.owner_token, connection_id=step_conn.id, connection_name=step_conn.name,
+                            subject=step.subject, body_preview=f"[Workflow step {step.step_order} failed]",
+                            status="failed", error=str(step_error)[:300],
+                        ))
 
             schedule.last_run_at = datetime.utcnow()
         except Exception as e:
