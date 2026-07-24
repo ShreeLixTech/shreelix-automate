@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 import requests as _requests
-from fastapi import FastAPI, HTTPException, Depends
+from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey
@@ -100,6 +100,8 @@ class Schedule(Base):
     scheduled_date = Column(String, nullable=True)  # "YYYY-MM-DD", only used when frequency="once"
     is_active = Column(String, nullable=False, default="yes")  # "yes"/"no" — pause without deleting
     last_run_at = Column(DateTime, nullable=True)
+    retry_count = Column(Integer, nullable=False, default=0)  # how many times we've retried the CURRENT failure
+    max_retries = Column(Integer, nullable=False, default=3)
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Bulk mode fields — used when mode="bulk_send" or "bulk_document"
@@ -108,6 +110,10 @@ class Schedule(Base):
     email_column = Column(String, nullable=True)
     slides_template_id = Column(String, nullable=True)  # used only when mode="bulk_document"
     pdf_filename_template = Column(String, nullable=True)
+    # Optional per-row condition for bulk modes — skip a row unless it passes. Blank = send to every row.
+    condition_column = Column(String, nullable=True)
+    condition_operator = Column(String, nullable=True)  # "equals", "not_equals", "greater_than", "less_than", "contains"
+    condition_value = Column(String, nullable=True)
 
 
 class WorkflowStep(Base):
@@ -121,6 +127,28 @@ class WorkflowStep(Base):
     to_address = Column(String, nullable=True)
     subject = Column(String, nullable=True)
     body = Column(String, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class InboundWebhook(Base):
+    """A unique URL an external service can POST to, which triggers a configured action here.
+    This is the reverse of our other connectors — instead of us sending out, something notifies us in."""
+    __tablename__ = "inbound_webhooks"
+    id = Column(Integer, primary_key=True, index=True)
+    owner_token = Column(String, nullable=False, index=True)
+    token = Column(String, unique=True, nullable=False, index=True)  # the secret part of the URL
+    name = Column(String, nullable=False)
+    connection_id = Column(Integer, ForeignKey("connections.id"), nullable=False)  # where the resulting action gets sent
+    to_address = Column(String, nullable=True)
+    subject_template = Column(String, nullable=True)  # can use {{field}} from the incoming payload
+    body_template = Column(String, nullable=False)
+    # Optional condition — only fire the action if this passes. Left blank = always fire.
+    condition_field = Column(String, nullable=True)  # which key in the incoming JSON payload to check
+    condition_operator = Column(String, nullable=True)  # "equals", "not_equals", "greater_than", "less_than", "contains"
+    condition_value = Column(String, nullable=True)
+    is_active = Column(String, nullable=False, default="yes")
+    trigger_count = Column(Integer, nullable=False, default=0)
+    last_triggered_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
@@ -207,6 +235,9 @@ class BulkSendRequest(BaseModel):
     email_column: str  # which column header contains the recipient email
     subject_template: str
     body_template: str
+    condition_column: Optional[str] = None
+    condition_operator: Optional[str] = None
+    condition_value: Optional[str] = None
 
 
 class BulkDocumentSendRequest(BaseModel):
@@ -219,6 +250,9 @@ class BulkDocumentSendRequest(BaseModel):
     pdf_filename_template: str = "Document-{{name}}.pdf"
     subject_template: str
     body_template: str
+    condition_column: Optional[str] = None
+    condition_operator: Optional[str] = None
+    condition_value: Optional[str] = None
 
 
 class ScheduleCreate(BaseModel):
@@ -237,6 +271,9 @@ class ScheduleCreate(BaseModel):
     email_column: Optional[str] = None
     slides_template_id: Optional[str] = None
     pdf_filename_template: Optional[str] = None
+    condition_column: Optional[str] = None
+    condition_operator: Optional[str] = None
+    condition_value: Optional[str] = None
 
 
 class ScheduleOut(BaseModel):
@@ -258,6 +295,11 @@ class ScheduleOut(BaseModel):
     email_column: Optional[str]
     slides_template_id: Optional[str]
     pdf_filename_template: Optional[str]
+    condition_column: Optional[str]
+    condition_operator: Optional[str]
+    condition_value: Optional[str]
+    retry_count: int
+    max_retries: int
     class Config:
         from_attributes = True
 
@@ -283,6 +325,37 @@ class WorkflowStepOut(BaseModel):
     to_address: Optional[str]
     subject: Optional[str]
     body: str
+    created_at: datetime
+    class Config:
+        from_attributes = True
+
+
+class InboundWebhookCreate(BaseModel):
+    owner_token: str
+    name: str
+    connection_id: int
+    to_address: Optional[str] = None
+    subject_template: Optional[str] = None
+    body_template: str
+    condition_field: Optional[str] = None
+    condition_operator: Optional[str] = None
+    condition_value: Optional[str] = None
+
+
+class InboundWebhookOut(BaseModel):
+    id: int
+    token: str
+    name: str
+    connection_id: int
+    to_address: Optional[str]
+    subject_template: Optional[str]
+    body_template: str
+    condition_field: Optional[str]
+    condition_operator: Optional[str]
+    condition_value: Optional[str]
+    is_active: str
+    trigger_count: int
+    last_triggered_at: Optional[datetime]
     created_at: datetime
     class Config:
         from_attributes = True
@@ -629,6 +702,29 @@ def google_bulk_oauth_callback(payload: BulkGoogleOAuthCallback, db: Session = D
     )
 
 
+def evaluate_condition(field_value, operator, expected_value) -> bool:
+    """Shared condition check — used for both bulk-row filtering and inbound webhook triggers.
+    No condition set (operator/expected_value blank) always passes."""
+    if not operator or expected_value is None or expected_value == "":
+        return True
+    field_str = "" if field_value is None else str(field_value).strip()
+    expected_str = str(expected_value).strip()
+    try:
+        if operator == "equals":
+            return field_str == expected_str
+        if operator == "not_equals":
+            return field_str != expected_str
+        if operator == "contains":
+            return expected_str.lower() in field_str.lower()
+        if operator == "greater_than":
+            return float(field_str) > float(expected_str)
+        if operator == "less_than":
+            return float(field_str) < float(expected_str)
+    except (ValueError, TypeError):
+        return False  # e.g. comparing "abc" > "5" numerically — treat as not matching rather than crashing
+    return True
+
+
 def extract_spreadsheet_id(input_str: str) -> str:
     """Accepts either a raw Sheet ID or a full Google Sheets URL and returns just the ID."""
     if "/d/" in input_str:
@@ -670,8 +766,22 @@ def get_sheet_rows(payload: SheetRowsRequest, db: Session = Depends(get_db)):
     return {"headers": headers, "rows": rows}
 
 
+GMAIL_DAILY_SAFETY_LIMIT = 450  # Gmail's real cap is ~500/day for regular accounts — stop safely before hitting it
+
+
+def get_todays_send_count(db: Session, connection_id: int) -> int:
+    today_start = now_ist().replace(hour=0, minute=0, second=0, microsecond=0) - IST_OFFSET  # convert back to UTC for the DB comparison
+    return db.query(MessageLog).filter(
+        MessageLog.connection_id == connection_id,
+        MessageLog.status == "sent",
+        MessageLog.created_at >= today_start,
+    ).count()
+
+
 def run_bulk_email_send(db: Session, owner_token: str, bulk_conn: Connection, spreadsheet_id: str,
-                          sheet_range: str, email_column: str, subject_template: str, body_template: str) -> dict:
+                          sheet_range: str, email_column: str, subject_template: str, body_template: str,
+                          condition_column: Optional[str] = None, condition_operator: Optional[str] = None,
+                          condition_value: Optional[str] = None) -> dict:
     """Core logic: read every row from a Sheet, personalize, send via Gmail. Used by both the
     immediate 'Send Now' button and scheduled bulk sends — one tested code path for both."""
     bulk_config = _json.loads(bulk_conn.config)
@@ -696,10 +806,21 @@ def run_bulk_email_send(db: Session, owner_token: str, bulk_conn: Connection, sp
     if email_column not in headers:
         raise HTTPException(status_code=400, detail=f"Column '{email_column}' not found in sheet. Found columns: {headers}")
 
-    results = {"sent": 0, "failed": 0, "errors": []}
+    results = {"sent": 0, "failed": 0, "skipped_by_condition": 0, "stopped_early_rate_limit": False, "errors": []}
+    sent_today = get_todays_send_count(db, bulk_conn.id)
 
     for row in values[1:]:
+        if sent_today >= GMAIL_DAILY_SAFETY_LIMIT:
+            results["stopped_early_rate_limit"] = True
+            results["errors"].append(f"Stopped early — approaching Gmail's daily sending limit ({GMAIL_DAILY_SAFETY_LIMIT}/day). Remaining rows will need to send tomorrow or via a different connection.")
+            break
+
         row_dict = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
+
+        if condition_column and not evaluate_condition(row_dict.get(condition_column), condition_operator, condition_value):
+            results["skipped_by_condition"] += 1
+            continue
+
         to_addr = row_dict.get(email_column, "").strip()
         if not to_addr:
             results["failed"] += 1
@@ -715,6 +836,7 @@ def run_bulk_email_send(db: Session, owner_token: str, bulk_conn: Connection, sp
         try:
             send_via_gmail_api(bulk_config, subject, body, to_addr)
             results["sent"] += 1
+            sent_today += 1
             db.add(MessageLog(
                 owner_token=owner_token, connection_id=bulk_conn.id, connection_name=bulk_conn.name,
                 subject=subject, body_preview=(body[:120] + "...") if len(body) > 120 else body, status="sent",
@@ -742,12 +864,15 @@ def bulk_send(payload: BulkSendRequest, db: Session = Depends(get_db)):
     return run_bulk_email_send(
         db, payload.owner_token, bulk_conn, payload.spreadsheet_id, payload.sheet_range,
         payload.email_column, payload.subject_template, payload.body_template,
+        payload.condition_column, payload.condition_operator, payload.condition_value,
     )
 
 
 def run_bulk_document_send(db: Session, owner_token: str, bulk_conn: Connection, spreadsheet_id: str,
                              sheet_range: str, email_column: str, slides_template_id: str,
-                             pdf_filename_template: str, subject_template: str, body_template: str) -> dict:
+                             pdf_filename_template: str, subject_template: str, body_template: str,
+                             condition_column: Optional[str] = None, condition_operator: Optional[str] = None,
+                             condition_value: Optional[str] = None) -> dict:
     """Core logic: for every row, duplicate the Slides template, fill it in, export as PDF,
     email it as an attachment. Used by both the immediate button and scheduled sends."""
     bulk_config = _json.loads(bulk_conn.config)
@@ -772,10 +897,21 @@ def run_bulk_document_send(db: Session, owner_token: str, bulk_conn: Connection,
     if email_column not in headers:
         raise HTTPException(status_code=400, detail=f"Column '{email_column}' not found. Found columns: {headers}")
 
-    results = {"sent": 0, "failed": 0, "errors": []}
+    results = {"sent": 0, "failed": 0, "skipped_by_condition": 0, "stopped_early_rate_limit": False, "errors": []}
+    sent_today = get_todays_send_count(db, bulk_conn.id)
 
     for row in values[1:]:
+        if sent_today >= GMAIL_DAILY_SAFETY_LIMIT:
+            results["stopped_early_rate_limit"] = True
+            results["errors"].append(f"Stopped early — approaching Gmail's daily sending limit ({GMAIL_DAILY_SAFETY_LIMIT}/day).")
+            break
+
         row_dict = {headers[i]: (row[i] if i < len(row) else "") for i in range(len(headers))}
+
+        if condition_column and not evaluate_condition(row_dict.get(condition_column), condition_operator, condition_value):
+            results["skipped_by_condition"] += 1
+            continue
+
         to_addr = row_dict.get(email_column, "").strip()
         if not to_addr:
             results["failed"] += 1
@@ -801,6 +937,7 @@ def run_bulk_document_send(db: Session, owner_token: str, bulk_conn: Connection,
             send_via_gmail_api_with_attachment(bulk_config, subject, body, to_addr, pdf_bytes, filename)
 
             results["sent"] += 1
+            sent_today += 1
             db.add(MessageLog(
                 owner_token=owner_token, connection_id=bulk_conn.id, connection_name=bulk_conn.name,
                 subject=subject, body_preview=f"[PDF attached: {filename}] " + (body[:100] if len(body) > 100 else body),
@@ -833,6 +970,7 @@ def bulk_generate_and_send(payload: BulkDocumentSendRequest, db: Session = Depen
         db, payload.owner_token, bulk_conn, payload.spreadsheet_id, payload.sheet_range,
         payload.email_column, payload.slides_template_id, payload.pdf_filename_template,
         payload.subject_template, payload.body_template,
+        payload.condition_column, payload.condition_operator, payload.condition_value,
     )
 
 
@@ -1168,6 +1306,9 @@ def create_schedule(payload: ScheduleCreate, db: Session = Depends(get_db)):
         email_column=payload.email_column,
         slides_template_id=payload.slides_template_id,
         pdf_filename_template=payload.pdf_filename_template,
+        condition_column=payload.condition_column,
+        condition_operator=payload.condition_operator,
+        condition_value=payload.condition_value,
     )
     db.add(db_schedule)
     db.commit()
@@ -1251,6 +1392,108 @@ def delete_schedule(schedule_id: int, owner_token: str, db: Session = Depends(ge
     return {"status": "deleted"}
 
 
+# ==================== Inbound Webhooks (reverse trigger — external services notify us) ====================
+import secrets as _secrets
+
+
+@app.post("/inbound-webhooks", response_model=InboundWebhookOut)
+def create_inbound_webhook(payload: InboundWebhookCreate, db: Session = Depends(get_db)):
+    conn = db.query(Connection).filter(Connection.id == payload.connection_id, Connection.owner_token == payload.owner_token).first()
+    if not conn:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    if conn.conn_type in {"smtp", "gmail_api", "google", "google_bulk"} and not payload.to_address:
+        raise HTTPException(status_code=400, detail="An email address to send to is required for this connection type")
+
+    token = _secrets.token_urlsafe(24)
+    db_hook = InboundWebhook(
+        owner_token=payload.owner_token,
+        token=token,
+        name=payload.name,
+        connection_id=payload.connection_id,
+        to_address=payload.to_address,
+        subject_template=payload.subject_template,
+        body_template=payload.body_template,
+        condition_field=payload.condition_field,
+        condition_operator=payload.condition_operator,
+        condition_value=payload.condition_value,
+    )
+    db.add(db_hook)
+    db.commit()
+    db.refresh(db_hook)
+    return db_hook
+
+
+@app.get("/inbound-webhooks", response_model=list[InboundWebhookOut])
+def list_inbound_webhooks(owner_token: str, db: Session = Depends(get_db)):
+    return db.query(InboundWebhook).filter(InboundWebhook.owner_token == owner_token).order_by(InboundWebhook.id.desc()).all()
+
+
+@app.delete("/inbound-webhooks/{hook_id}")
+def delete_inbound_webhook(hook_id: int, owner_token: str, db: Session = Depends(get_db)):
+    hook = db.query(InboundWebhook).filter(InboundWebhook.id == hook_id, InboundWebhook.owner_token == owner_token).first()
+    if not hook:
+        raise HTTPException(status_code=404, detail="Inbound webhook not found")
+    db.delete(hook)
+    db.commit()
+    return {"status": "deleted"}
+
+
+@app.patch("/inbound-webhooks/{hook_id}/toggle")
+def toggle_inbound_webhook(hook_id: int, owner_token: str, is_active: bool, db: Session = Depends(get_db)):
+    hook = db.query(InboundWebhook).filter(InboundWebhook.id == hook_id, InboundWebhook.owner_token == owner_token).first()
+    if not hook:
+        raise HTTPException(status_code=404, detail="Inbound webhook not found")
+    hook.is_active = "yes" if is_active else "no"
+    db.commit()
+    return {"status": "updated"}
+
+
+@app.post("/inbound/{token}")
+async def trigger_inbound_webhook(token: str, request: Request, db: Session = Depends(get_db)):
+    """The public URL external services POST to. No auth required here by design — the random,
+    unguessable token itself is what protects this, same pattern Slack/Stripe/GitHub webhooks use."""
+    hook = db.query(InboundWebhook).filter(InboundWebhook.token == token).first()
+    if not hook:
+        raise HTTPException(status_code=404, detail="Unknown webhook")
+    if hook.is_active != "yes":
+        raise HTTPException(status_code=403, detail="This webhook is paused")
+
+    try:
+        payload_data = await request.json()
+        if not isinstance(payload_data, dict):
+            payload_data = {}
+    except Exception:
+        payload_data = {}  # non-JSON body — still let it trigger, just no placeholders to fill
+
+    if hook.condition_field and not evaluate_condition(payload_data.get(hook.condition_field), hook.condition_operator, hook.condition_value):
+        return {"status": "skipped", "reason": "condition not met"}
+
+    conn = db.query(Connection).filter(Connection.id == hook.connection_id).first()
+    if not conn:
+        raise HTTPException(status_code=500, detail="The connection this webhook uses no longer exists")
+
+    subject = hook.subject_template or ""
+    body = hook.body_template
+    for key, val in payload_data.items():
+        subject = subject.replace("{{" + key + "}}", str(val))
+        body = body.replace("{{" + key + "}}", str(val))
+
+    try:
+        execute_single_send(db, hook.owner_token, conn, subject, body, hook.to_address)
+        hook.trigger_count += 1
+        hook.last_triggered_at = datetime.utcnow()
+        db.commit()
+        return {"status": "triggered"}
+    except Exception as e:
+        db.add(MessageLog(
+            owner_token=hook.owner_token, connection_id=conn.id, connection_name=conn.name,
+            subject=subject, body_preview="[Inbound webhook trigger failed]",
+            status="failed", error=str(e)[:300],
+        ))
+        db.commit()
+        raise HTTPException(status_code=502, detail=f"Trigger action failed: {str(e)[:200]}")
+
+
 def is_schedule_due(schedule: Schedule, current: datetime) -> bool:
     """Checks if a schedule should fire right now, in IST. Tolerant of the checker running every
     few minutes rather than at the exact minute — 'due' means 'we've passed the target time and
@@ -1329,6 +1572,7 @@ def run_due_schedules(db: Session = Depends(get_db)):
                 bulk_result = run_bulk_email_send(
                     db, schedule.owner_token, conn, schedule.spreadsheet_id, schedule.sheet_range or "A1:Z1000",
                     schedule.email_column, schedule.subject or "", schedule.body,
+                    schedule.condition_column, schedule.condition_operator, schedule.condition_value,
                 )
                 results["ran"] += 1
                 results["errors"].extend(bulk_result.get("errors", []))
@@ -1337,6 +1581,7 @@ def run_due_schedules(db: Session = Depends(get_db)):
                     db, schedule.owner_token, conn, schedule.spreadsheet_id, schedule.sheet_range or "A1:Z1000",
                     schedule.email_column, schedule.slides_template_id, schedule.pdf_filename_template or "Document-{{name}}.pdf",
                     schedule.subject or "", schedule.body,
+                    schedule.condition_column, schedule.condition_operator, schedule.condition_value,
                 )
                 results["ran"] += 1
                 results["errors"].extend(bulk_result.get("errors", []))
@@ -1363,6 +1608,7 @@ def run_due_schedules(db: Session = Depends(get_db)):
                         ))
 
             schedule.last_run_at = datetime.utcnow()
+            schedule.retry_count = 0  # success — reset the retry counter
         except Exception as e:
             results["failed"] += 1
             results["errors"].append(f"Schedule '{schedule.name}': {str(e)[:150]}")
@@ -1371,7 +1617,13 @@ def run_due_schedules(db: Session = Depends(get_db)):
                 subject=schedule.subject, body_preview="[Scheduled send failed]",
                 status="failed", error=str(e)[:300],
             ))
-            schedule.last_run_at = datetime.utcnow()  # mark as attempted even on failure, so daily schedules don't retry-storm
+            schedule.retry_count += 1
+            if schedule.retry_count >= schedule.max_retries:
+                # Given up for now — mark as attempted so it waits for its next natural cycle (tomorrow, etc.)
+                schedule.last_run_at = datetime.utcnow()
+                schedule.retry_count = 0
+                results["errors"].append(f"Schedule '{schedule.name}': gave up after {schedule.max_retries} retries")
+            # else: leave last_run_at untouched — it'll be picked up and retried on the next run-due check
 
     db.commit()
     return results
