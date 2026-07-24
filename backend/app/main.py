@@ -2,6 +2,8 @@ import os
 import json as _json
 import smtplib
 import socket
+import hmac
+import hashlib
 from email.mime.text import MIMEText
 from datetime import datetime, timedelta
 from typing import Optional
@@ -161,6 +163,20 @@ class SupportTicket(Base):
     message = Column(String, nullable=False)
     status = Column(String, nullable=False, default="open")  # "open", "resolved"
     created_at = Column(DateTime, default=datetime.utcnow)
+
+
+class Payment(Base):
+    """Real money audit trail — every Razorpay order created and every verified payment gets logged here,
+    regardless of success or failure, so nothing about actual payments is ever silently lost."""
+    __tablename__ = "payments"
+    id = Column(Integer, primary_key=True, index=True)
+    owner_token = Column(String, nullable=False, index=True)
+    razorpay_order_id = Column(String, nullable=False, index=True)
+    razorpay_payment_id = Column(String, nullable=True)
+    amount = Column(Integer, nullable=False)  # in paise
+    status = Column(String, nullable=False, default="created")  # "created", "verified", "signature_failed"
+    created_at = Column(DateTime, default=datetime.utcnow)
+    verified_at = Column(DateTime, nullable=True)
 
 
 Base.metadata.create_all(bind=engine)
@@ -390,6 +406,24 @@ class SupportTicketOut(BaseModel):
         from_attributes = True
 
 
+class CreateOrderRequest(BaseModel):
+    owner_token: str
+
+
+class CreateOrderResponse(BaseModel):
+    order_id: str
+    amount: int
+    currency: str
+    key_id: str
+
+
+class VerifyPaymentRequest(BaseModel):
+    owner_token: str
+    razorpay_order_id: str
+    razorpay_payment_id: str
+    razorpay_signature: str
+
+
 class SendMessageRequest(BaseModel):
     owner_token: str
     connection_id: int
@@ -441,6 +475,10 @@ GOOGLE_CLIENT_ID = "121520616317-h33rgmtjgvc1gd2i2dga9i2nnjlmhi9v.apps.googleuse
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = "https://shreelixtech.github.io/shreelix-automate/automate.html"
 FREE_TOKEN_LIMIT = 100
+
+RAZORPAY_KEY_ID = "rzp_test_THRRlsDu9ixHo8"
+RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "")
+SUBSCRIPTION_PRICE_PAISE = 29900  # ₹299.00 — Razorpay amounts are always in paise
 
 
 @app.post("/auth/google", response_model=GoogleAuthResponse)
@@ -1321,6 +1359,81 @@ def admin_resolve_ticket(ticket_id: int, key: str, db: Session = Depends(get_db)
     ticket.status = "resolved"
     db.commit()
     return {"status": "resolved"}
+
+
+# ---- Razorpay Payments ----
+@app.post("/razorpay/create-order", response_model=CreateOrderResponse)
+def create_razorpay_order(payload: CreateOrderRequest, db: Session = Depends(get_db)):
+    if not RAZORPAY_KEY_SECRET:
+        raise HTTPException(status_code=503, detail="Payments aren't configured on the server yet")
+
+    user = db.query(AppUser).filter(AppUser.user_token == payload.owner_token).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    resp = _requests.post(
+        "https://api.razorpay.com/v1/orders",
+        auth=(RAZORPAY_KEY_ID, RAZORPAY_KEY_SECRET),
+        json={
+            "amount": SUBSCRIPTION_PRICE_PAISE,
+            "currency": "INR",
+            "notes": {"owner_token": payload.owner_token, "product": "shreelix-automate-pro"},
+        },
+        timeout=15,
+    )
+    if not resp.ok:
+        raise HTTPException(status_code=502, detail=f"Razorpay rejected the order: {resp.text[:200]}")
+
+    order_data = resp.json()
+    db.add(Payment(
+        owner_token=payload.owner_token,
+        razorpay_order_id=order_data["id"],
+        amount=SUBSCRIPTION_PRICE_PAISE,
+        status="created",
+    ))
+    db.commit()
+
+    return CreateOrderResponse(
+        order_id=order_data["id"], amount=SUBSCRIPTION_PRICE_PAISE, currency="INR", key_id=RAZORPAY_KEY_ID,
+    )
+
+
+@app.post("/razorpay/verify-payment")
+def verify_razorpay_payment(payload: VerifyPaymentRequest, db: Session = Depends(get_db)):
+    if not RAZORPAY_KEY_SECRET:
+        raise HTTPException(status_code=503, detail="Payments aren't configured on the server yet")
+
+    payment_record = db.query(Payment).filter(Payment.razorpay_order_id == payload.razorpay_order_id).first()
+    if not payment_record:
+        raise HTTPException(status_code=404, detail="No matching order found")
+
+    # Razorpay's documented signature scheme: HMAC-SHA256(order_id + "|" + payment_id, key_secret)
+    expected_signature = hmac.new(
+        RAZORPAY_KEY_SECRET.encode(),
+        f"{payload.razorpay_order_id}|{payload.razorpay_payment_id}".encode(),
+        hashlib.sha256,
+    ).hexdigest()
+
+    if not hmac.compare_digest(expected_signature, payload.razorpay_signature):
+        payment_record.status = "signature_failed"
+        db.commit()
+        raise HTTPException(status_code=400, detail="Payment verification failed — signature mismatch")
+
+    payment_record.razorpay_payment_id = payload.razorpay_payment_id
+    payment_record.status = "verified"
+    payment_record.verified_at = datetime.utcnow()
+
+    user = db.query(AppUser).filter(AppUser.user_token == payload.owner_token).first()
+    if not user:
+        db.commit()
+        raise HTTPException(status_code=404, detail="User not found — payment verified but couldn't upgrade the account, contact support")
+
+    base = user.subscription_expires_at if (user.subscription_expires_at and user.subscription_expires_at > datetime.utcnow()) else datetime.utcnow()
+    user.subscription_status = "paid"
+    user.subscription_expires_at = base + timedelta(days=30)
+    db.commit()
+
+    return {"status": "verified", "subscription_expires_at": user.subscription_expires_at}
 
 
 @app.get("/dashboard/summary")
