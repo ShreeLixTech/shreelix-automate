@@ -182,6 +182,7 @@
     <div class="tab" data-tab="compose">Compose & Send</div>
     <div class="tab" data-tab="bulk">Bulk Merge</div>
     <div class="tab" data-tab="schedules">Schedules</div>
+    <div class="tab" data-tab="inbound">Inbound Triggers</div>
     <div class="tab" data-tab="history">History</div>
   </div>
 
@@ -226,6 +227,9 @@
         </div>
 
         <div id="fields-http" style="display:none;">
+          <div style="background:#EAF2FF;border:1px solid #C9E0FF;border-radius:8px;padding:10px 12px;margin-top:14px;margin-bottom:4px;font-size:12.5px;color:var(--blue-deep);">
+            💡 <b>Want to send SMS?</b> This same HTTP connector works with SMS gateways like Twilio or MSG91 — they're just APIs too. <a href="#" onclick="fillTwilioPreset(event)" style="text-decoration:underline;font-weight:600;">Fill in a Twilio starting point</a>
+          </div>
           <label for="http-conn-name">Connection name</label>
           <input id="http-conn-name" placeholder="e.g. My API">
           <label for="http-method">Method</label>
@@ -305,6 +309,25 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
         <input id="bulk-email-column" placeholder="e.g. email">
 
         <div style="margin-top:16px;display:flex;align-items:center;gap:8px;">
+          <input type="checkbox" id="bulk-use-condition" style="width:auto;" onchange="toggleBulkCondition()">
+          <label for="bulk-use-condition" style="margin:0;font-weight:500;color:var(--text);font-size:13.5px;">Only send to rows matching a condition</label>
+        </div>
+        <div id="bulk-condition-fields" style="display:none;margin-top:10px;">
+          <label for="bulk-cond-column">Column to check</label>
+          <input id="bulk-cond-column" placeholder="e.g. status">
+          <label for="bulk-cond-operator">Condition</label>
+          <select id="bulk-cond-operator">
+            <option value="equals">Equals</option>
+            <option value="not_equals">Not equals</option>
+            <option value="contains">Contains</option>
+            <option value="greater_than">Greater than (number)</option>
+            <option value="less_than">Less than (number)</option>
+          </select>
+          <label for="bulk-cond-value">Value to compare against</label>
+          <input id="bulk-cond-value" placeholder="e.g. VIP">
+        </div>
+
+        <div style="margin-top:16px;display:flex;align-items:center;gap:8px;">
           <input type="checkbox" id="bulk-attach-doc" style="width:auto;" onchange="toggleDocFields()">
           <label for="bulk-attach-doc" style="margin:0;font-weight:500;color:var(--text);font-size:13.5px;">Attach a personalized document (from Google Slides) to each email</label>
         </div>
@@ -371,6 +394,24 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
             <label for="sched-pdf-filename">PDF filename</label>
             <input id="sched-pdf-filename" placeholder="e.g. Certificate-{{name}}.pdf" value="Document-{{name}}.pdf">
           </div>
+          <div style="margin-top:14px;display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="sched-use-condition" style="width:auto;" onchange="toggleSchedCondition()">
+            <label for="sched-use-condition" style="margin:0;font-weight:500;color:var(--text);font-size:13.5px;">Only send to rows matching a condition</label>
+          </div>
+          <div id="sched-condition-fields" style="display:none;margin-top:10px;">
+            <label for="sched-cond-column">Column to check</label>
+            <input id="sched-cond-column" placeholder="e.g. status">
+            <label for="sched-cond-operator">Condition</label>
+            <select id="sched-cond-operator">
+              <option value="equals">Equals</option>
+              <option value="not_equals">Not equals</option>
+              <option value="contains">Contains</option>
+              <option value="greater_than">Greater than (number)</option>
+              <option value="less_than">Less than (number)</option>
+            </select>
+            <label for="sched-cond-value">Value to compare against</label>
+            <input id="sched-cond-value" placeholder="e.g. VIP">
+          </div>
         </div>
 
         <label for="sched-subject">Subject <span style="font-weight:400;color:var(--muted);">(use {{column_name}} for bulk modes)</span></label>
@@ -408,6 +449,57 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
       <div class="card">
         <h3>Your schedules</h3>
         <div id="schedulesWrap"><div class="empty">Loading…</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- INBOUND TRIGGERS -->
+  <div class="panel" id="panel-inbound">
+    <div class="step-guide">
+      <b>Reverse automation:</b> instead of us sending something out, an external tool (a payment gateway, another app, your own website) can notify <i>us</i> here, and that automatically triggers an action. Give the URL below to whatever service should be able to trigger it.
+    </div>
+    <div class="grid2">
+      <div class="card">
+        <h3>Create an inbound trigger</h3>
+        <label for="inbound-name">Name</label>
+        <input id="inbound-name" placeholder="e.g. Payment received alert">
+        <label for="inbound-connection">When triggered, send via</label>
+        <select id="inbound-connection" onchange="onInboundConnectionChange()"></select>
+        <div id="inbound-to-wrap">
+          <label for="inbound-to">To</label>
+          <input id="inbound-to" placeholder="recipient@example.com">
+        </div>
+        <label for="inbound-subject">Subject</label>
+        <input id="inbound-subject" placeholder="Use {{field}} from the incoming data">
+        <label for="inbound-body">Message</label>
+        <textarea id="inbound-body" placeholder="e.g. New payment of {{amount}} from {{customer_name}}" style="min-height:80px;"></textarea>
+
+        <div style="border-top:1px solid var(--border);margin-top:16px;padding-top:14px;">
+          <div style="display:flex;align-items:center;gap:8px;">
+            <input type="checkbox" id="inbound-use-condition" style="width:auto;" onchange="toggleInboundCondition()">
+            <label for="inbound-use-condition" style="margin:0;font-weight:500;color:var(--text);font-size:13.5px;">Only trigger if a condition is met</label>
+          </div>
+          <div id="inbound-condition-fields" style="display:none;margin-top:10px;">
+            <label for="inbound-cond-field">Field name (from the incoming data)</label>
+            <input id="inbound-cond-field" placeholder="e.g. status">
+            <label for="inbound-cond-operator">Condition</label>
+            <select id="inbound-cond-operator">
+              <option value="equals">Equals</option>
+              <option value="not_equals">Not equals</option>
+              <option value="contains">Contains</option>
+              <option value="greater_than">Greater than (number)</option>
+              <option value="less_than">Less than (number)</option>
+            </select>
+            <label for="inbound-cond-value">Value to compare against</label>
+            <input id="inbound-cond-value" placeholder="e.g. urgent">
+          </div>
+        </div>
+
+        <button class="btn" id="createInboundBtn" onclick="createInboundWebhook()">Create trigger</button>
+      </div>
+      <div class="card">
+        <h3>Your inbound triggers</h3>
+        <div id="inboundWrap"><div class="empty">Loading…</div></div>
       </div>
     </div>
   </div>
@@ -632,6 +724,7 @@ document.querySelectorAll('.tab').forEach(tab => {
     if (tab.dataset.tab === 'history') loadHistory();
     if (tab.dataset.tab === 'bulk') populateBulkConnectionDropdown();
     if (tab.dataset.tab === 'schedules') { populateSchedConnectionDropdown(); loadSchedules(); }
+    if (tab.dataset.tab === 'inbound') { populateInboundConnectionDropdown(); loadInboundWebhooks(); }
   });
 });
 
@@ -810,6 +903,16 @@ function openFaq(e){
   document.getElementById('faqOverlay').classList.add('open');
 }
 
+function fillTwilioPreset(e){
+  if (e) e.preventDefault();
+  document.getElementById('http-conn-name').value = 'SMS via Twilio';
+  document.getElementById('http-method').value = 'POST';
+  document.getElementById('http-url').value = 'https://api.twilio.com/2010-04-01/Accounts/YOUR_ACCOUNT_SID/Messages.json';
+  document.getElementById('http-headers').value = 'Authorization: Basic YOUR_BASE64_ENCODED_SID_AND_TOKEN\nContent-Type: application/x-www-form-urlencoded';
+  document.getElementById('http-body').value = 'To=%2B91XXXXXXXXXX&From=YOUR_TWILIO_NUMBER&Body={{body}}';
+  toast('Preset filled in — replace the YOUR_... placeholders with your real Twilio account details before saving');
+}
+
 // ---------- Connection type selector ----------
 function selectConnType(type){
   document.querySelectorAll('.type-btn').forEach(b => b.classList.toggle('active', b.dataset.type === type));
@@ -955,6 +1058,10 @@ function toggleDocFields(){
   const checked = document.getElementById('bulk-attach-doc').checked;
   document.getElementById('bulk-doc-fields').style.display = checked ? 'block' : 'none';
 }
+function toggleBulkCondition(){
+  const checked = document.getElementById('bulk-use-condition').checked;
+  document.getElementById('bulk-condition-fields').style.display = checked ? 'block' : 'none';
+}
 
 async function runBulkSend(){
   const connId = document.getElementById('bulk-connection-select').value;
@@ -963,11 +1070,16 @@ async function runBulkSend(){
   const subjectTemplate = document.getElementById('bulk-subject').value.trim();
   const bodyTemplate = getEditorHtml('bulk-body');
   const attachDoc = document.getElementById('bulk-attach-doc').checked;
+  const useCondition = document.getElementById('bulk-use-condition').checked;
+  const condColumn = useCondition ? document.getElementById('bulk-cond-column').value.trim() : null;
+  const condOperator = useCondition ? document.getElementById('bulk-cond-operator').value : null;
+  const condValue = useCondition ? document.getElementById('bulk-cond-value').value.trim() : null;
   const resultEl = document.getElementById('bulk-result');
   resultEl.textContent = '';
 
   if (!connId) { toast('Connect and select a Google account first', true); return; }
   if (!sheetUrl || !emailColumn || !getEditorText('bulk-body')) { toast('Fill in the sheet, email column, and message', true); return; }
+  if (useCondition && (!condColumn || !condValue)) { toast('Fill in the condition column and value, or turn the condition off', true); return; }
 
   let slidesTemplateId, pdfFilenameTemplate;
   if (attachDoc) {
@@ -977,23 +1089,27 @@ async function runBulkSend(){
   }
 
   if (!(await consumeToken())) return;
-  if (!confirm('This will send a personalized message to every row in the sheet. Continue?')) return;
+  if (!confirm('This will send a personalized message to every matching row in the sheet. Continue?')) return;
 
   const btn = document.getElementById('bulkSendBtn');
   btn.disabled = true; btn.textContent = attachDoc ? 'Generating & sending documents…' : 'Sending to all rows…';
   try {
     const endpoint = attachDoc ? '/bulk/generate-and-send' : '/bulk/send';
+    const conditionFields = { condition_column: condColumn, condition_operator: condOperator, condition_value: condValue };
     const body = attachDoc ? {
       owner_token: USER_TOKEN, bulk_connection_id: parseInt(connId), spreadsheet_id: sheetUrl,
       email_column: emailColumn, slides_template_id: slidesTemplateId, pdf_filename_template: pdfFilenameTemplate,
-      subject_template: subjectTemplate, body_template: bodyTemplate,
+      subject_template: subjectTemplate, body_template: bodyTemplate, ...conditionFields,
     } : {
       owner_token: USER_TOKEN, bulk_connection_id: parseInt(connId), spreadsheet_id: sheetUrl,
-      email_column: emailColumn, subject_template: subjectTemplate, body_template: bodyTemplate,
+      email_column: emailColumn, subject_template: subjectTemplate, body_template: bodyTemplate, ...conditionFields,
     };
     const result = await api(endpoint, {method:'POST', body: JSON.stringify(body)});
+    let extras = '';
+    if (result.skipped_by_condition > 0) extras += `<br><span style="color:var(--muted);">⊘ Skipped by condition: ${result.skipped_by_condition}</span>`;
+    if (result.stopped_early_rate_limit) extras += `<br><span style="color:#B8720C;">⚠️ Stopped early — approaching Gmail's daily sending limit. Remaining rows need another day.</span>`;
     resultEl.innerHTML = `<span style="color:var(--green);font-weight:600;">✓ Sent: ${result.sent}</span>` +
-      (result.failed > 0 ? ` &nbsp; <span style="color:var(--red);font-weight:600;">✗ Failed: ${result.failed}</span><br><span style="color:var(--muted);">${result.errors.map(escapeHtml).join('<br>')}</span>` : '');
+      (result.failed > 0 ? ` &nbsp; <span style="color:var(--red);font-weight:600;">✗ Failed: ${result.failed}</span><br><span style="color:var(--muted);">${result.errors.map(escapeHtml).join('<br>')}</span>` : '') + extras;
     toast(`Bulk send complete: ${result.sent} sent`);
   } catch(e) {
     resultEl.innerHTML = `<span style="color:var(--red);font-weight:600;">✗ ${escapeHtml(e.message)}</span>`;
@@ -1147,6 +1263,10 @@ function onSchedFrequencyChange(){
   const freq = document.getElementById('sched-frequency').value;
   document.getElementById('sched-date-wrap').style.display = freq === 'once' ? 'block' : 'none';
 }
+function toggleSchedCondition(){
+  const checked = document.getElementById('sched-use-condition').checked;
+  document.getElementById('sched-condition-fields').style.display = checked ? 'block' : 'none';
+}
 
 async function createSchedule(){
   const connId = document.getElementById('sched-connection').value;
@@ -1166,6 +1286,10 @@ async function createSchedule(){
   const emailColumn = document.getElementById('sched-email-column').value.trim();
   const slidesTemplate = document.getElementById('sched-slides-template').value.trim();
   const pdfFilename = document.getElementById('sched-pdf-filename').value.trim();
+  const useCondition = document.getElementById('sched-use-condition').checked;
+  const condColumn = useCondition ? document.getElementById('sched-cond-column').value.trim() : null;
+  const condOperator = useCondition ? document.getElementById('sched-cond-operator').value : null;
+  const condValue = useCondition ? document.getElementById('sched-cond-value').value.trim() : null;
 
   if (!connId) { toast('Choose a connection first', true); return; }
   if (!name) { toast('Give this schedule a name', true); return; }
@@ -1190,6 +1314,9 @@ async function createSchedule(){
       email_column: mode !== 'single' ? emailColumn : null,
       slides_template_id: mode === 'bulk_document' ? slidesTemplate : null,
       pdf_filename_template: mode === 'bulk_document' ? (pdfFilename || 'Document-{{name}}.pdf') : null,
+      condition_column: mode !== 'single' ? condColumn : null,
+      condition_operator: mode !== 'single' ? condOperator : null,
+      condition_value: mode !== 'single' ? condValue : null,
     })});
 
     // Submit any extra steps added inline, one after another, against the schedule we just created
@@ -1221,6 +1348,8 @@ async function createSchedule(){
     document.getElementById('sched-sheet-url').value = '';
     document.getElementById('sched-email-column').value = '';
     document.getElementById('sched-slides-template').value = '';
+    document.getElementById('sched-use-condition').checked = false;
+    toggleSchedCondition();
     document.getElementById('extraStepsWrap').innerHTML = '';
     loadSchedules();
   } catch(e) {
@@ -1275,11 +1404,12 @@ async function loadSchedules(){
       const freqLabel = s.frequency === 'daily' ? `Every day at ${s.scheduled_time}` : `Once on ${s.scheduled_date} at ${s.scheduled_time}`;
       const lastRun = s.last_run_at ? new Date(s.last_run_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'}) : 'Never run yet';
       const modeLabel = s.mode === 'bulk_document' ? '📄 Bulk + document' : s.mode === 'bulk_send' ? '📊 Bulk (Sheet)' : '✉️ Single recipient';
+      const retryNote = s.retry_count > 0 ? `<span style="color:var(--red);"> · Retrying (attempt ${s.retry_count}/${s.max_retries})</span>` : '';
       return `
         <div class="conn-row">
           <div>
             <div class="cname">${escapeHtml(s.name)} <span style="font-size:11px;font-weight:500;color:var(--blue-deep);">${modeLabel}</span></div>
-            <div class="cdetail">${freqLabel} · Last run: ${lastRun}</div>
+            <div class="cdetail">${freqLabel} · Last run: ${lastRun}${retryNote}</div>
           </div>
           <div style="display:flex;gap:6px;align-items:center;">
             <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);margin:0;font-weight:400;">
@@ -1400,6 +1530,129 @@ async function deleteSchedule(id, name){
     await api('/schedules/'+id+'?owner_token='+encodeURIComponent(USER_TOKEN), {method:'DELETE'});
     toast('Schedule deleted');
     loadSchedules();
+  } catch(e) {
+    toast(e.message, true);
+  }
+}
+
+// ---------- Inbound Triggers ----------
+const AUTOMATE_API_BASE = API;
+
+function populateInboundConnectionDropdown(){
+  const select = document.getElementById('inbound-connection');
+  if (!select) return;
+  select.innerHTML = connections.map(c => `<option value="${c.id}" data-type="${c.conn_type}">${escapeHtml(c.name)} (${c.conn_type === 'gmail_api' || c.conn_type === 'google' ? 'gmail' : c.conn_type})</option>`).join('');
+  onInboundConnectionChange();
+}
+function onInboundConnectionChange(){
+  const select = document.getElementById('inbound-connection');
+  const type = select.selectedOptions[0]?.dataset.type;
+  document.getElementById('inbound-to-wrap').style.display = ['smtp','gmail_api','google','google_bulk'].includes(type) ? 'block' : 'none';
+}
+function toggleInboundCondition(){
+  const checked = document.getElementById('inbound-use-condition').checked;
+  document.getElementById('inbound-condition-fields').style.display = checked ? 'block' : 'none';
+}
+
+async function createInboundWebhook(){
+  const name = document.getElementById('inbound-name').value.trim();
+  const connId = document.getElementById('inbound-connection').value;
+  const connType = document.getElementById('inbound-connection').selectedOptions[0]?.dataset.type;
+  const toAddress = document.getElementById('inbound-to').value.trim();
+  const subject = document.getElementById('inbound-subject').value.trim();
+  const body = document.getElementById('inbound-body').value.trim();
+  const useCondition = document.getElementById('inbound-use-condition').checked;
+  const condField = useCondition ? document.getElementById('inbound-cond-field').value.trim() : null;
+  const condOperator = useCondition ? document.getElementById('inbound-cond-operator').value : null;
+  const condValue = useCondition ? document.getElementById('inbound-cond-value').value.trim() : null;
+
+  if (!name) { toast('Give this trigger a name', true); return; }
+  if (!connId) { toast('Choose a connection', true); return; }
+  if (['smtp','gmail_api','google','google_bulk'].includes(connType) && !toAddress) { toast('Enter who this should send to', true); return; }
+  if (!body) { toast('Write a message', true); return; }
+  if (useCondition && (!condField || !condValue)) { toast('Fill in the condition field and value, or turn the condition off', true); return; }
+  if (!(await consumeToken())) return;
+
+  const btn = document.getElementById('createInboundBtn');
+  btn.disabled = true; btn.textContent = 'Creating…';
+  try {
+    await api('/inbound-webhooks', {method:'POST', body: JSON.stringify({
+      owner_token: USER_TOKEN, name, connection_id: parseInt(connId),
+      to_address: toAddress || null, subject_template: subject || null, body_template: body,
+      condition_field: condField, condition_operator: condOperator, condition_value: condValue,
+    })});
+    toast('Inbound trigger created');
+    document.getElementById('inbound-name').value = '';
+    document.getElementById('inbound-to').value = '';
+    document.getElementById('inbound-subject').value = '';
+    document.getElementById('inbound-body').value = '';
+    document.getElementById('inbound-use-condition').checked = false;
+    toggleInboundCondition();
+    loadInboundWebhooks();
+  } catch(e) {
+    toast(e.message, true);
+  } finally {
+    btn.disabled = false; btn.textContent = 'Create trigger';
+  }
+}
+
+async function loadInboundWebhooks(){
+  const wrap = document.getElementById('inboundWrap');
+  try {
+    const hooks = await api('/inbound-webhooks?owner_token=' + encodeURIComponent(USER_TOKEN));
+    if (hooks.length === 0) {
+      wrap.innerHTML = `<div class="empty"><div class="big">🔔</div>No inbound triggers yet — create one on the left.</div>`;
+      return;
+    }
+    wrap.innerHTML = hooks.map(h => {
+      const fullUrl = AUTOMATE_API_BASE + '/inbound/' + h.token;
+      const lastFired = h.last_triggered_at ? new Date(h.last_triggered_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'}) : 'Never fired yet';
+      return `
+        <div class="conn-row" style="flex-direction:column;align-items:stretch;">
+          <div style="display:flex;justify-content:space-between;align-items:flex-start;">
+            <div>
+              <div class="cname">${escapeHtml(h.name)}</div>
+              <div class="cdetail">Fired ${h.trigger_count} time(s) · Last: ${lastFired}</div>
+            </div>
+            <div style="display:flex;gap:6px;align-items:center;">
+              <label style="display:flex;align-items:center;gap:5px;font-size:12px;color:var(--muted);margin:0;font-weight:400;">
+                <input type="checkbox" style="width:auto;" ${h.is_active === 'yes' ? 'checked' : ''} onchange="toggleInboundWebhook(${h.id}, this.checked)"> Active
+              </label>
+              <button class="btn small danger" onclick="deleteInboundWebhook(${h.id}, '${escapeHtml(h.name).replace(/'/g,"\\'")}')">Delete</button>
+            </div>
+          </div>
+          <div style="margin-top:10px;background:var(--bg);border-radius:6px;padding:8px 10px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+            <code style="font-size:11px;color:var(--muted);word-break:break-all;">${escapeHtml(fullUrl)}</code>
+            <button class="btn small secondary" style="flex-shrink:0;" onclick="copyInboundUrl('${fullUrl}')">Copy</button>
+          </div>
+        </div>
+      `;
+    }).join('');
+  } catch(e) {
+    wrap.innerHTML = `<div class="empty">Couldn't load triggers.</div>`;
+  }
+}
+
+function copyInboundUrl(url){
+  navigator.clipboard.writeText(url).then(() => toast('URL copied')).catch(() => toast('Could not copy — select and copy manually', true));
+}
+
+async function toggleInboundWebhook(id, isActive){
+  try {
+    await api(`/inbound-webhooks/${id}/toggle?owner_token=${encodeURIComponent(USER_TOKEN)}&is_active=${isActive}`, {method:'PATCH'});
+    toast(isActive ? 'Trigger resumed' : 'Trigger paused');
+  } catch(e) {
+    toast(e.message, true);
+    loadInboundWebhooks();
+  }
+}
+
+async function deleteInboundWebhook(id, name){
+  if (!confirm(`Delete "${name}"? Any external service still pointed at this URL will stop working.`)) return;
+  try {
+    await api(`/inbound-webhooks/${id}?owner_token=` + encodeURIComponent(USER_TOKEN), {method:'DELETE'});
+    toast('Trigger deleted');
+    loadInboundWebhooks();
   } catch(e) {
     toast(e.message, true);
   }
