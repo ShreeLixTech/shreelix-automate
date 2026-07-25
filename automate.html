@@ -1598,7 +1598,7 @@ function onSendConnectionChange(){
   const select = document.getElementById('send-connection');
   const opt = select.options[select.selectedIndex];
   const type = opt ? opt.dataset.type : null;
-  document.getElementById('send-to-wrap').style.display = (type === 'smtp' || type === 'gmail_api') ? 'block' : 'none';
+  document.getElementById('send-to-wrap').style.display = ['smtp', 'gmail_api', 'google', 'google_bulk'].includes(type) ? 'block' : 'none';
 }
 
 document.getElementById('sendBtn').addEventListener('click', async () => {
@@ -1606,7 +1606,7 @@ document.getElementById('sendBtn').addEventListener('click', async () => {
   const select = document.getElementById('send-connection');
   const opt = select.options[select.selectedIndex];
   const connType = opt ? opt.dataset.type : null;
-  const isEmailType = (connType === 'smtp' || connType === 'gmail_api');
+  const isEmailType = ['smtp', 'gmail_api', 'google', 'google_bulk'].includes(connType);
   const toAddress = document.getElementById('send-to').value.trim();
   const subject = document.getElementById('send-subject').value.trim();
   // Email connections get real formatting (Bold/Italic/Highlight); Webhook/HTTP get plain text,
@@ -1703,7 +1703,7 @@ async function createSchedule(){
 
   if (!connId) { toast('Choose a connection first', true); return; }
   if (!name) { toast('Give this schedule a name', true); return; }
-  if (mode === 'single' && (connType === 'smtp' || connType === 'gmail_api') && !toAddress) { toast('Enter who to send this to', true); return; }
+  if (mode === 'single' && ['smtp', 'gmail_api', 'google', 'google_bulk'].includes(connType) && !toAddress) { toast('Enter who to send this to', true); return; }
   if (mode !== 'single' && (!sheetUrl || !emailColumn)) { toast('Fill in the Sheet URL and email column', true); return; }
   if (mode === 'bulk_document' && !slidesTemplate) { toast('Paste your Slides template URL', true); return; }
   if (!getEditorText('sched-body')) { toast('Write a message', true); return; }
