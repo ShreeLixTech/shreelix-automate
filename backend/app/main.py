@@ -504,6 +504,52 @@ RAZORPAY_KEY_ID = "rzp_test_THRRlsDu9ixHo8"
 RAZORPAY_KEY_SECRET = os.environ.get("RAZORPAY_KEY_SECRET", "")
 SUBSCRIPTION_PRICE_PAISE = 29900  # ₹299.00 — Razorpay amounts are always in paise
 
+# ---- Service Account for Bulk Merge (Sheets/Slides/Drive) ----
+# This avoids per-user OAuth for Drive access entirely — no CASA security audit needed, no cost.
+# Users manually "Share" their specific Sheet/Slides file with this account's email instead of
+# clicking "Connect" — a real, Google-supported pattern for exactly this situation.
+SERVICE_ACCOUNT_JSON = os.environ.get("SERVICE_ACCOUNT_JSON", "")
+SERVICE_ACCOUNT_SCOPES = [
+    "https://www.googleapis.com/auth/spreadsheets.readonly",
+    "https://www.googleapis.com/auth/presentations",
+    "https://www.googleapis.com/auth/drive",
+]
+_service_account_email_cache = None
+
+
+def get_service_account_email() -> str:
+    """Returns the service account's email — this is what users need to Share their files with."""
+    global _service_account_email_cache
+    if _service_account_email_cache:
+        return _service_account_email_cache
+    if not SERVICE_ACCOUNT_JSON:
+        raise HTTPException(status_code=503, detail="Bulk Merge isn't configured on the server yet")
+    info = _json.loads(SERVICE_ACCOUNT_JSON)
+    _service_account_email_cache = info.get("client_email", "")
+    return _service_account_email_cache
+
+
+def get_service_account_access_token() -> str:
+    """Gets a fresh access token authenticated as our shared service account — used for reading
+    Sheets/Slides/Drive data that users have manually shared with it. Not tied to any individual user."""
+    if not SERVICE_ACCOUNT_JSON:
+        raise HTTPException(status_code=503, detail="Bulk Merge isn't configured on the server yet")
+    try:
+        from google.oauth2 import service_account as _service_account
+        from google.auth.transport.requests import Request as _GoogleAuthRequest
+        info = _json.loads(SERVICE_ACCOUNT_JSON)
+        credentials = _service_account.Credentials.from_service_account_info(info, scopes=SERVICE_ACCOUNT_SCOPES)
+        credentials.refresh(_GoogleAuthRequest())
+        return credentials.token
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=f"Couldn't authenticate the service account: {str(e)[:200]}")
+
+
+@app.get("/bulk/service-account-email")
+def bulk_service_account_email():
+    """Public — tells the frontend which email address users should Share their Sheets/Slides with."""
+    return {"email": get_service_account_email()}
+
 
 @app.post("/auth/google", response_model=GoogleAuthResponse)
 def google_signin(payload: GoogleAuthRequest, db: Session = Depends(get_db)):
@@ -840,11 +886,10 @@ def get_sheet_rows(payload: SheetRowsRequest, db: Session = Depends(get_db)):
     conn = db.query(Connection).filter(
         Connection.id == payload.connection_id, Connection.owner_token == payload.owner_token
     ).first()
-    if not conn or conn.conn_type not in {"google_bulk", "google"}:
-        raise HTTPException(status_code=404, detail="Bulk Google connection not found")
+    if not conn or conn.conn_type not in {"gmail_api", "google", "google_bulk"}:
+        raise HTTPException(status_code=404, detail="Connection not found")
 
-    config = _json.loads(conn.config)
-    access_token = get_fresh_access_token(config["refresh_token"])
+    access_token = get_service_account_access_token()
     sheet_id = extract_spreadsheet_id(payload.spreadsheet_id)
 
     resp = _requests.get(
@@ -852,6 +897,8 @@ def get_sheet_rows(payload: SheetRowsRequest, db: Session = Depends(get_db)):
         headers={"Authorization": f"Bearer {access_token}"}, timeout=15
     )
     if not resp.ok:
+        if resp.status_code == 403 or resp.status_code == 404:
+            raise HTTPException(status_code=502, detail=f"Couldn't read the sheet — make sure you've Shared it with {get_service_account_email()}")
         raise HTTPException(status_code=502, detail=f"Couldn't read the sheet: {resp.text[:200]}")
 
     values = resp.json().get("values", [])
@@ -884,13 +931,10 @@ def run_bulk_email_send(db: Session, owner_token: str, bulk_conn: Connection, sp
                           sheet_range: str, email_column: str, subject_template: str, body_template: str,
                           condition_column: Optional[str] = None, condition_operator: Optional[str] = None,
                           condition_value: Optional[str] = None) -> dict:
-    """Core logic: read every row from a Sheet, personalize, send via Gmail. Used by both the
-    immediate 'Send Now' button and scheduled bulk sends — one tested code path for both."""
+    """Core logic: read every row from a Sheet (via our shared service account — the user must have
+    manually Shared the Sheet with it), personalize, send via the user's own Gmail connection."""
     bulk_config = _json.loads(bulk_conn.config)
-    try:
-        access_token = get_fresh_access_token(bulk_config["refresh_token"])
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    access_token = get_service_account_access_token()
     sheet_id = extract_spreadsheet_id(spreadsheet_id)
 
     resp = _requests.get(
@@ -898,6 +942,8 @@ def run_bulk_email_send(db: Session, owner_token: str, bulk_conn: Connection, sp
         headers={"Authorization": f"Bearer {access_token}"}, timeout=15
     )
     if not resp.ok:
+        if resp.status_code == 403 or resp.status_code == 404:
+            raise HTTPException(status_code=502, detail=f"Couldn't read the sheet — make sure you've Shared it with {get_service_account_email()}")
         raise HTTPException(status_code=502, detail=f"Couldn't read the sheet: {resp.text[:200]}")
 
     values = resp.json().get("values", [])
@@ -961,7 +1007,7 @@ def bulk_send(payload: BulkSendRequest, db: Session = Depends(get_db)):
     bulk_conn = db.query(Connection).filter(
         Connection.id == payload.bulk_connection_id, Connection.owner_token == payload.owner_token
     ).first()
-    if not bulk_conn or bulk_conn.conn_type not in {"google_bulk", "google"}:
+    if not bulk_conn or bulk_conn.conn_type not in {"gmail_api", "google", "google_bulk"}:
         raise HTTPException(status_code=404, detail="Bulk Google connection not found")
     return run_bulk_email_send(
         db, payload.owner_token, bulk_conn, payload.spreadsheet_id, payload.sheet_range,
@@ -975,13 +1021,11 @@ def run_bulk_document_send(db: Session, owner_token: str, bulk_conn: Connection,
                              pdf_filename_template: str, subject_template: str, body_template: str,
                              condition_column: Optional[str] = None, condition_operator: Optional[str] = None,
                              condition_value: Optional[str] = None) -> dict:
-    """Core logic: for every row, duplicate the Slides template, fill it in, export as PDF,
-    email it as an attachment. Used by both the immediate button and scheduled sends."""
+    """Core logic: for every row, duplicate the Slides template (via our shared service account —
+    the user must have Shared both the Sheet and the Slides template with it), fill it in, export as
+    PDF, and email it as an attachment through the user's own Gmail connection."""
     bulk_config = _json.loads(bulk_conn.config)
-    try:
-        access_token = get_fresh_access_token(bulk_config["refresh_token"])
-    except RuntimeError as e:
-        raise HTTPException(status_code=502, detail=str(e))
+    access_token = get_service_account_access_token()
     sheet_id = extract_spreadsheet_id(spreadsheet_id)
 
     resp = _requests.get(
@@ -989,6 +1033,8 @@ def run_bulk_document_send(db: Session, owner_token: str, bulk_conn: Connection,
         headers={"Authorization": f"Bearer {access_token}"}, timeout=15
     )
     if not resp.ok:
+        if resp.status_code == 403 or resp.status_code == 404:
+            raise HTTPException(status_code=502, detail=f"Couldn't read the sheet — make sure you've Shared it with {get_service_account_email()}")
         raise HTTPException(status_code=502, detail=f"Couldn't read the sheet: {resp.text[:200]}")
 
     values = resp.json().get("values", [])
@@ -1031,7 +1077,7 @@ def run_bulk_document_send(db: Session, owner_token: str, bulk_conn: Connection,
         copy_id = None
         row_access_token = None
         try:
-            row_access_token = get_fresh_access_token(bulk_config["refresh_token"])
+            row_access_token = get_service_account_access_token()
             slides_id = extract_spreadsheet_id(slides_template_id)
             copy_id = duplicate_slides_template(row_access_token, slides_id, f"temp-{filename}")
             fill_slides_placeholders(row_access_token, copy_id, row_dict)
@@ -1066,7 +1112,7 @@ def bulk_generate_and_send(payload: BulkDocumentSendRequest, db: Session = Depen
     bulk_conn = db.query(Connection).filter(
         Connection.id == payload.bulk_connection_id, Connection.owner_token == payload.owner_token
     ).first()
-    if not bulk_conn or bulk_conn.conn_type not in {"google_bulk", "google"}:
+    if not bulk_conn or bulk_conn.conn_type not in {"gmail_api", "google", "google_bulk"}:
         raise HTTPException(status_code=404, detail="Bulk Google connection not found")
     return run_bulk_document_send(
         db, payload.owner_token, bulk_conn, payload.spreadsheet_id, payload.sheet_range,
@@ -1567,8 +1613,8 @@ def create_schedule(payload: ScheduleCreate, db: Session = Depends(get_db)):
         if conn.conn_type in {"smtp", "gmail_api"} and not payload.to_address:
             raise HTTPException(status_code=400, detail="An email address to send to is required for this connection type")
     else:
-        if conn.conn_type not in {"google_bulk", "google"}:
-            raise HTTPException(status_code=400, detail="Bulk modes require a Google connection with Sheets/Slides/Drive access — reconnect Google if this one was created before that was available")
+        if conn.conn_type not in {"gmail_api", "google", "google_bulk"}:
+            raise HTTPException(status_code=400, detail="Bulk modes require a Google connection for sending — connect Gmail first")
         if not payload.spreadsheet_id or not payload.email_column:
             raise HTTPException(status_code=400, detail="Sheet URL and email column are required for bulk schedules")
         if payload.mode == "bulk_document" and not payload.slides_template_id:
