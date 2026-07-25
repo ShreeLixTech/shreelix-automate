@@ -363,15 +363,24 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
   <!-- BULK MERGE -->
   <div class="panel" id="panel-bulk">
     <div class="step-guide">
-      <b>Sending to many people at once?</b> Use the same Google connection from the Connections tab — it already has everything needed. Paste a Sheet link below, preview its columns, and write your message using <code>{{column_name}}</code> for anything that should change per person.
+      <b>Sending to many people at once?</b> Use your regular Gmail connection from the Connections tab to send — then just <b>Share your Google Sheet</b> (and Slides template, if using one) with the special email address below, so we're allowed to read it. Paste the Sheet link, preview its columns, and write your message using <code>{{column_name}}</code> for anything that should change per person.
     </div>
     <div class="grid2">
       <div class="card">
         <h3>Choose your connection</h3>
-        <label for="bulk-connection-select">Google connection</label>
+        <label for="bulk-connection-select">Gmail connection <span style="font-weight:400;color:var(--muted);">(used to send)</span></label>
         <select id="bulk-connection-select"></select>
         <div id="bulk-no-conn-hint" style="display:none;margin-top:14px;padding:12px 14px;background:#FFF3E0;border:1px solid #F5D98B;border-radius:8px;font-size:12.5px;color:#8A6416;">
-          No Google connection yet — go to the <b>Connections</b> tab and click "Connect with Google" first.
+          No Gmail connection yet — go to the <b>Connections</b> tab and click "Connect with Google" first.
+        </div>
+
+        <div style="margin-top:20px;padding-top:16px;border-top:1px solid var(--border);">
+          <label>Share your Sheet &amp; Slides with this email</label>
+          <div style="background:var(--blue-light);border:1px solid #C9E0FF;border-radius:8px;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;gap:8px;">
+            <code id="bulkServiceAccountEmail" style="font-size:12px;color:var(--blue-deep);word-break:break-all;">Loading…</code>
+            <button class="btn small secondary" style="flex-shrink:0;" onclick="copyServiceAccountEmail()">Copy</button>
+          </div>
+          <div class="hint">Open your Google Sheet → Share → paste this email → give it "Viewer" access. Do the same for your Slides template if attaching documents. This lets us read the file without needing your full Google account connected.</div>
         </div>
       </div>
       <div class="card">
@@ -840,7 +849,7 @@ document.querySelectorAll('.tab').forEach(tab => {
     if (tab.dataset.tab === 'compose') populateSendConnectionDropdown();
     if (tab.dataset.tab === 'history') loadHistory();
     if (tab.dataset.tab === 'dashboard') loadDashboard();
-    if (tab.dataset.tab === 'bulk') populateBulkConnectionDropdown();
+    if (tab.dataset.tab === 'bulk') { populateBulkConnectionDropdown(); loadServiceAccountEmail(); }
     if (tab.dataset.tab === 'schedules') { populateSchedConnectionDropdown(); loadSchedules(); }
     if (tab.dataset.tab === 'inbound') { populateInboundConnectionDropdown(); loadInboundWebhooks(); }
   });
@@ -1114,7 +1123,7 @@ const HELP_CONTENT = {
   },
   'sheet-url': {
     title: 'What goes in the Google Sheet URL?',
-    body: 'Create a Google Sheet with one row per person, and a column header in the first row for each piece of information (like name, email, amount). Then just copy the web address from your browser while the Sheet is open, and paste it here.'
+    body: 'Create a Google Sheet with one row per person, and a column header in the first row for each piece of information (like name, email, amount). Important: you also need to Share this Sheet with the special email address shown on this page first, or we won\'t be able to read it. Then just copy the web address from your browser while the Sheet is open, and paste it here.'
   },
   'placeholders': {
     title: 'What are the {{curly brackets}} for?',
@@ -1126,7 +1135,7 @@ const HELP_CONTENT = {
   },
   'slides-template': {
     title: 'How does the personalized document work?',
-    body: 'Design one document in Google Slides — like a certificate — with {{placeholders}} in it matching your Sheet\'s columns. ShreeLix Automate automatically creates one unique, filled-in copy for every person and attaches it to their message.'
+    body: 'Design one document in Google Slides — like a certificate — with {{placeholders}} in it matching your Sheet\'s columns. Share that Slides file with the same special email shown on this page, the same way you shared your Sheet. ShreeLix Automate automatically creates one unique, filled-in copy for every person and attaches it to their message.'
   },
   'inbound-trigger': {
     title: 'How does an inbound trigger actually work?',
@@ -2086,6 +2095,23 @@ async function loadHistory(){
 }
 
 // ---------- Init ----------
+let SERVICE_ACCOUNT_EMAIL = '';
+async function loadServiceAccountEmail(){
+  try {
+    const result = await api('/bulk/service-account-email');
+    SERVICE_ACCOUNT_EMAIL = result.email;
+    const el = document.getElementById('bulkServiceAccountEmail');
+    if (el) el.textContent = SERVICE_ACCOUNT_EMAIL;
+  } catch(e) {
+    const el = document.getElementById('bulkServiceAccountEmail');
+    if (el) el.textContent = "Couldn't load — try again shortly";
+  }
+}
+function copyServiceAccountEmail(){
+  if (!SERVICE_ACCOUNT_EMAIL) { toast('Still loading, try again in a second', true); return; }
+  navigator.clipboard.writeText(SERVICE_ACCOUNT_EMAIL).then(() => toast('Email copied')).catch(() => toast('Could not copy — select and copy manually', true));
+}
+
 checkStatus();
 handleGmailOAuthRedirect();
 if (isSignedIn()) { loadConnections(); loadDashboard(); }
