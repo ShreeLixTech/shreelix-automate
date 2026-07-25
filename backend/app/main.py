@@ -1368,7 +1368,7 @@ def send_message(payload: SendMessageRequest, db: Session = Depends(get_db)):
             if not payload.to_address:
                 raise ValueError("An email address to send to is required")
             send_via_smtp(config, payload.subject or "", payload.body, payload.to_address)
-        elif conn.conn_type == "gmail_api":
+        elif conn.conn_type in {"gmail_api", "google", "google_bulk"}:
             if not payload.to_address:
                 raise ValueError("An email address to send to is required")
             send_via_gmail_api(config, payload.subject or "", payload.body, payload.to_address)
