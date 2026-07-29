@@ -495,7 +495,7 @@ def health():
 # ---------------------------------------------------------------
 # Google Sign-In (same verified pattern as Billing)
 # ---------------------------------------------------------------
-GOOGLE_CLIENT_ID = "121520616317-h33rgmtjgvc1gd2i2dga9i2nnjlmhi9v.apps.googleusercontent.com"
+GOOGLE_CLIENT_ID = "189573533657-gaeis84n2l4gtdql1i3igccab3cej8lk.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
 GOOGLE_REDIRECT_URI = "https://shreelixtech.github.io/shreelix-automate/automate.html"
 FREE_TOKEN_LIMIT = 100
