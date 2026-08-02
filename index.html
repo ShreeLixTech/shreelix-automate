@@ -2,11 +2,113 @@
 <html lang="en">
 <head>
 <meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>ShreeLix Automate</title>
-<meta http-equiv="refresh" content="0; url=automate.html">
-<script>window.location.href = "automate.html";</script>
+<meta name="description" content="ShreeLix Automate connects your email and other tools so you can send messages, alerts, and reports automatically — no coding required.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@600;700;800&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root{--navy:#0B1F3A;--blue:#1E90FF;--blue-deep:#0B5FCC;--purple:#7C5CFC;--bg:#F5F7FA;--text:#1A2540;--muted:#5B6B82;--border:#E3E8F0;}
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:'Inter',sans-serif;background:var(--bg);color:var(--text);line-height:1.6;}
+  h1,h2,h3{font-family:'Poppins',sans-serif;color:var(--navy);}
+  a{color:inherit;text-decoration:none;}
+  .wrap{max-width:960px;margin:0 auto;padding:0 24px;}
+
+  nav{padding:20px 0;}
+  .brand{display:flex;align-items:center;gap:11px;font-family:'Poppins',sans-serif;font-weight:700;font-size:19px;color:var(--navy);}
+  .mark{width:36px;height:36px;border-radius:10px;background:linear-gradient(135deg,var(--blue),var(--purple));display:flex;align-items:center;justify-content:center;color:#fff;font-weight:800;font-size:16px;}
+
+  .hero{padding:64px 0 56px;text-align:center;}
+  .hero h1{font-size:40px;font-weight:800;margin-bottom:16px;letter-spacing:-0.02em;}
+  .hero p{font-size:18px;color:var(--muted);max-width:600px;margin:0 auto 32px;}
+  .btn{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,var(--blue),var(--blue-deep));color:#fff;padding:14px 28px;border-radius:10px;font-weight:600;font-size:16px;box-shadow:0 4px 14px rgba(30,144,255,0.3);}
+
+  .features{padding:40px 0 64px;display:grid;grid-template-columns:repeat(3,1fr);gap:24px;}
+  @media(max-width:800px){.features{grid-template-columns:1fr;}}
+  .feature{background:#fff;border:1px solid var(--border);border-radius:14px;padding:24px;}
+  .feature .icon{font-size:26px;margin-bottom:12px;}
+  .feature h3{font-size:16px;margin-bottom:8px;}
+  .feature p{font-size:14px;color:var(--muted);}
+
+  .how{padding:48px 0;background:#fff;border-top:1px solid var(--border);border-bottom:1px solid var(--border);}
+  .how h2{text-align:center;font-size:26px;margin-bottom:40px;}
+  .steps{display:grid;grid-template-columns:repeat(3,1fr);gap:32px;}
+  @media(max-width:800px){.steps{grid-template-columns:1fr;}}
+  .step{text-align:center;}
+  .step-num{width:36px;height:36px;border-radius:50%;background:var(--blue);color:#fff;font-weight:700;display:flex;align-items:center;justify-content:center;margin:0 auto 14px;font-family:'Poppins',sans-serif;}
+  .step h3{font-size:15px;margin-bottom:6px;}
+  .step p{font-size:13.5px;color:var(--muted);}
+
+  footer{padding:32px 0;text-align:center;font-size:13px;color:var(--muted);}
+  footer a{color:var(--blue-deep);margin:0 10px;}
+</style>
 </head>
 <body>
-  <p>Redirecting to <a href="automate.html">ShreeLix Automate</a>…</p>
+
+<nav>
+  <div class="wrap">
+    <div class="brand"><span class="mark">S</span> ShreeLix Automate</div>
+  </div>
+</nav>
+
+<header class="hero">
+  <div class="wrap">
+    <h1>ShreeLix Automate</h1>
+    <p>ShreeLix Automate connects your email and other tools so you can send messages, alerts, and reports automatically — manually, in bulk, or triggered by another app. No coding required.</p>
+    <a class="btn" href="automate.html">Get Started →</a>
+  </div>
+</header>
+
+<section class="wrap features">
+  <div class="feature">
+    <div class="icon">✉️</div>
+    <h3>Send from your own Gmail</h3>
+    <p>Connect your Gmail account and send single messages, or schedule them to send automatically.</p>
+  </div>
+  <div class="feature">
+    <div class="icon">📊</div>
+    <h3>Bulk, personalized messages</h3>
+    <p>Send a personalized message to hundreds of people at once, using a Google Sheet as your data source.</p>
+  </div>
+  <div class="feature">
+    <div class="icon">🔔</div>
+    <h3>Automatic triggers</h3>
+    <p>Let another app (like a payment gateway) notify ShreeLix Automate the moment something happens, and trigger a message automatically.</p>
+  </div>
+</section>
+
+<section class="how">
+  <div class="wrap">
+    <h2>How it works</h2>
+    <div class="steps">
+      <div class="step">
+        <div class="step-num">1</div>
+        <h3>Sign in with Google</h3>
+        <p>Create your free account in seconds.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">2</div>
+        <h3>Connect your Gmail</h3>
+        <p>Securely link your Gmail account with one click, using Google's official sign-in.</p>
+      </div>
+      <div class="step">
+        <div class="step-num">3</div>
+        <h3>Send, schedule, or automate</h3>
+        <p>Send a message now, set up a recurring schedule, or connect an automatic trigger.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div style="margin-bottom:10px;">© 2026 ShreeLix. Building Smart Solutions.</div>
+    <a href="privacy.html">Privacy Policy</a>
+    <a href="terms.html">Terms of Service</a>
+    <a href="refund.html">Refund Policy</a>
+  </div>
+</footer>
+
 </body>
 </html>
