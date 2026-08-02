@@ -1224,11 +1224,11 @@ function startGmailConnect(){
     client_id: GOOGLE_CLIENT_ID,
     redirect_uri: GOOGLE_REDIRECT_URI,
     response_type: 'code',
+    // Only gmail.send is needed here — Bulk Merge reads Sheets/Slides/Drive via our shared
+    // service account instead (see the Bulk Merge tab), so no Drive-family scope is requested
+    // through this per-user OAuth flow at all.
     scope: [
       'https://www.googleapis.com/auth/gmail.send',
-      'https://www.googleapis.com/auth/spreadsheets.readonly',
-      'https://www.googleapis.com/auth/presentations',
-      'https://www.googleapis.com/auth/drive',
       'email', 'profile',
     ].join(' '),
     access_type: 'offline',
