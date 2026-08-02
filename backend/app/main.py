@@ -740,7 +740,7 @@ def mask_connection_detail(conn_type: str, config: dict) -> str:
         return f"{email} (Official Gmail API)"
     if conn_type in {"google_bulk", "google"}:
         email = config.get("email", "your Google account")
-        return f"{email} (Gmail + Sheets + Slides + Drive)"
+        return f"{email} (Gmail — Sheets/Slides for Bulk Merge use a separate shared connection)"
     return "Unknown connection"
 
 
