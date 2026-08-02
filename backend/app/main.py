@@ -497,7 +497,7 @@ def health():
 # ---------------------------------------------------------------
 GOOGLE_CLIENT_ID = "189573533657-gaeis84n2l4gtdql1i3igccab3cej8lk.apps.googleusercontent.com"
 GOOGLE_CLIENT_SECRET = os.environ.get("GOOGLE_CLIENT_SECRET", "")
-GOOGLE_REDIRECT_URI = "https://shreelixtech.github.io/shreelix-automate/automate.html"
+GOOGLE_REDIRECT_URI = "https://automate.shreelix.com/automate.html"
 FREE_TOKEN_LIMIT = 100
 
 RAZORPAY_KEY_ID = "rzp_test_THRRlsDu9ixHo8"
