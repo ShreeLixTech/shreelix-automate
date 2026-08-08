@@ -113,6 +113,7 @@ class Schedule(Base):
     slides_template_id = Column(String, nullable=True)  # used only when mode="bulk_document"
     pdf_filename_template = Column(String, nullable=True)
     drive_connection_id = Column(Integer, ForeignKey("connections.id"), nullable=True)  # used only when mode="bulk_document" — separate Google connection with Drive access for creating the document
+    destination_folder_id = Column(String, nullable=True)  # optional Drive folder to save generated documents into
     # Optional per-row condition for bulk modes — skip a row unless it passes. Blank = send to every row.
     condition_column = Column(String, nullable=True)
     condition_operator = Column(String, nullable=True)  # "equals", "not_equals", "greater_than", "less_than", "contains"
@@ -276,12 +277,18 @@ class BulkDocumentSendRequest(BaseModel):
     sheet_range: str = "A1:Z1000"
     email_column: str
     slides_template_id: str  # the Google Slides presentation to use as a template
+    destination_folder_id: Optional[str] = None  # optional Drive folder to save generated documents into — defaults to Drive root if not set
     pdf_filename_template: str = "Document-{{name}}.pdf"
     subject_template: str
     body_template: str
     condition_column: Optional[str] = None
     condition_operator: Optional[str] = None
     condition_value: Optional[str] = None
+
+
+class PickerTokenRequest(BaseModel):
+    owner_token: str
+    drive_connection_id: int
 
 
 class ScheduleCreate(BaseModel):
@@ -301,6 +308,7 @@ class ScheduleCreate(BaseModel):
     slides_template_id: Optional[str] = None
     pdf_filename_template: Optional[str] = None
     drive_connection_id: Optional[int] = None  # required when mode="bulk_document" — separate connection with Drive access
+    destination_folder_id: Optional[str] = None
     condition_column: Optional[str] = None
     condition_operator: Optional[str] = None
     condition_value: Optional[str] = None
@@ -326,6 +334,7 @@ class ScheduleOut(BaseModel):
     slides_template_id: Optional[str]
     pdf_filename_template: Optional[str]
     drive_connection_id: Optional[int]
+    destination_folder_id: Optional[str]
     condition_column: Optional[str]
     condition_operator: Optional[str]
     condition_value: Optional[str]
@@ -811,6 +820,22 @@ def get_fresh_access_token(refresh_token: str) -> str:
     return token_resp.json()["access_token"]
 
 
+@app.post("/bulk/picker-token")
+def get_picker_token(payload: PickerTokenRequest, db: Session = Depends(get_db)):
+    """The Google Picker widget runs in the browser and needs a real OAuth access token to browse the
+    user's Drive. We only ever hand over a short-lived access token here (expires in ~1 hour) — the
+    actual refresh_token that could mint new tokens indefinitely always stays server-side, never sent
+    to the browser."""
+    conn = db.query(Connection).filter(
+        Connection.id == payload.drive_connection_id, Connection.owner_token == payload.owner_token,
+    ).first()
+    if not conn or conn.conn_type != "google_bulk":
+        raise HTTPException(status_code=404, detail="Document creation connection not found")
+    config = _json.loads(conn.config)
+    access_token = get_fresh_access_token(config["refresh_token"])
+    return {"access_token": access_token}
+
+
 @app.post("/auth/google-bulk/callback", response_model=ConnectionOut)
 def google_bulk_oauth_callback(payload: BulkGoogleOAuthCallback, db: Session = Depends(get_db)):
     """Same OAuth exchange as Gmail, but for the broader Sheets/Slides/Drive scopes used for bulk merge."""
@@ -1027,7 +1052,7 @@ def run_bulk_document_send(db: Session, owner_token: str, bulk_conn: Connection,
                              sheet_range: str, email_column: str, slides_template_id: str,
                              pdf_filename_template: str, subject_template: str, body_template: str,
                              condition_column: Optional[str] = None, condition_operator: Optional[str] = None,
-                             condition_value: Optional[str] = None) -> dict:
+                             condition_value: Optional[str] = None, destination_folder_id: Optional[str] = None) -> dict:
     """Core logic: for every row, duplicate the Slides template (using the user's own Google account via
     drive_conn — this needs real Drive storage, which our shared service account doesn't have), fill it
     in, export as PDF, and email it as an attachment through the user's own Gmail connection (bulk_conn).
@@ -1088,7 +1113,7 @@ def run_bulk_document_send(db: Session, owner_token: str, bulk_conn: Connection,
         try:
             row_access_token = get_fresh_access_token(drive_conn_config["refresh_token"])
             slides_id = extract_spreadsheet_id(slides_template_id)
-            copy_id = duplicate_slides_template(row_access_token, slides_id, f"temp-{filename}")
+            copy_id = duplicate_slides_template(row_access_token, slides_id, f"temp-{filename}", destination_folder_id)
             fill_slides_placeholders(row_access_token, copy_id, row_dict)
             pdf_bytes = export_slides_as_pdf(row_access_token, copy_id)
             send_via_gmail_api_with_attachment(bulk_config, subject, body, to_addr, pdf_bytes, filename)
@@ -1139,6 +1164,7 @@ def bulk_generate_and_send(payload: BulkDocumentSendRequest, db: Session = Depen
         payload.email_column, payload.slides_template_id, payload.pdf_filename_template,
         payload.subject_template, payload.body_template,
         payload.condition_column, payload.condition_operator, payload.condition_value,
+        payload.destination_folder_id,
     )
 
 
@@ -1314,12 +1340,16 @@ def send_via_gmail_api_with_attachment(config: dict, subject: str, body: str, to
         raise RuntimeError(f"Gmail API rejected the send: {send_resp.text[:200]}")
 
 
-def duplicate_slides_template(access_token: str, template_id: str, new_name: str) -> str:
-    """Makes a fresh copy of a Slides template via the Drive API. Returns the new file's ID."""
+def duplicate_slides_template(access_token: str, template_id: str, new_name: str, destination_folder_id: Optional[str] = None) -> str:
+    """Makes a fresh copy of a Slides template via the Drive API. Returns the new file's ID.
+    If a destination folder is given, the copy is created there instead of the account's Drive root."""
+    body = {"name": new_name}
+    if destination_folder_id:
+        body["parents"] = [destination_folder_id]
     resp = _requests.post(
         f"https://www.googleapis.com/drive/v3/files/{template_id}/copy",
         headers={"Authorization": f"Bearer {access_token}", "Content-Type": "application/json"},
-        json={"name": new_name},
+        json=body,
         timeout=20,
     )
     if not resp.ok:
@@ -1665,6 +1695,7 @@ def create_schedule(payload: ScheduleCreate, db: Session = Depends(get_db)):
         slides_template_id=payload.slides_template_id,
         pdf_filename_template=payload.pdf_filename_template,
         drive_connection_id=payload.drive_connection_id,
+        destination_folder_id=payload.destination_folder_id,
         condition_column=payload.condition_column,
         condition_operator=payload.condition_operator,
         condition_value=payload.condition_value,
@@ -1946,6 +1977,7 @@ def run_due_schedules(db: Session = Depends(get_db)):
                     schedule.email_column, schedule.slides_template_id, schedule.pdf_filename_template or "Document-{{name}}.pdf",
                     schedule.subject or "", schedule.body,
                     schedule.condition_column, schedule.condition_operator, schedule.condition_value,
+                    schedule.destination_folder_id,
                 )
                 results["ran"] += 1
                 results["errors"].extend(bulk_result.get("errors", []))
