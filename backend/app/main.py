@@ -12,7 +12,7 @@ import requests as _requests
 from fastapi import FastAPI, HTTPException, Depends, Request
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, func
+from sqlalchemy import create_engine, Column, Integer, String, Float, DateTime, ForeignKey, Text, func
 from sqlalchemy.orm import declarative_base, sessionmaker, Session
 
 # Render's outbound network doesn't support IPv6 — some providers (like Gmail's SMTP)
@@ -114,10 +114,15 @@ class Schedule(Base):
     pdf_filename_template = Column(String, nullable=True)
     drive_connection_id = Column(Integer, ForeignKey("connections.id"), nullable=True)  # used only when mode="bulk_document" — separate Google connection with Drive access for creating the document
     destination_folder_id = Column(String, nullable=True)  # optional Drive folder to save generated documents into
+    uploaded_rows_json = Column(Text, nullable=True)  # for schedules sourced from an uploaded CSV/Excel file instead of a live Google Sheet — same data is reused every run until replaced
     # Optional per-row condition for bulk modes — skip a row unless it passes. Blank = send to every row.
     condition_column = Column(String, nullable=True)
     condition_operator = Column(String, nullable=True)  # "equals", "not_equals", "greater_than", "less_than", "contains"
     condition_value = Column(String, nullable=True)
+
+    @property
+    def has_uploaded_data(self) -> bool:
+        return bool(self.uploaded_rows_json)
 
 
 class WorkflowStep(Base):
@@ -259,8 +264,9 @@ class SheetRowsRequest(BaseModel):
 class BulkSendRequest(BaseModel):
     owner_token: str
     bulk_connection_id: int  # the Google connection with Sheets/Drive access
-    spreadsheet_id: str
+    spreadsheet_id: Optional[str] = None  # provide this OR uploaded_rows, not both
     sheet_range: str = "A1:Z1000"
+    uploaded_rows: Optional[list[list[str]]] = None  # parsed CSV/Excel data — first row is headers
     email_column: str  # which column header contains the recipient email
     subject_template: str
     body_template: str
@@ -273,8 +279,9 @@ class BulkDocumentSendRequest(BaseModel):
     owner_token: str
     bulk_connection_id: int  # the Gmail connection used to send the emails
     drive_connection_id: int  # the separate Google connection (drive.file + presentations scope) used to create the document
-    spreadsheet_id: str
+    spreadsheet_id: Optional[str] = None  # provide this OR uploaded_rows, not both
     sheet_range: str = "A1:Z1000"
+    uploaded_rows: Optional[list[list[str]]] = None  # parsed CSV/Excel data — first row is headers
     email_column: str
     slides_template_id: str  # the Google Slides presentation to use as a template
     destination_folder_id: Optional[str] = None  # optional Drive folder to save generated documents into — defaults to Drive root if not set
@@ -309,6 +316,7 @@ class ScheduleCreate(BaseModel):
     pdf_filename_template: Optional[str] = None
     drive_connection_id: Optional[int] = None  # required when mode="bulk_document" — separate connection with Drive access
     destination_folder_id: Optional[str] = None
+    uploaded_rows: Optional[list[list[str]]] = None  # parsed CSV/Excel data — stored and reused on every scheduled run instead of a live Sheet
     condition_column: Optional[str] = None
     condition_operator: Optional[str] = None
     condition_value: Optional[str] = None
@@ -335,6 +343,7 @@ class ScheduleOut(BaseModel):
     pdf_filename_template: Optional[str]
     drive_connection_id: Optional[int]
     destination_folder_id: Optional[str]
+    has_uploaded_data: bool = False
     condition_column: Optional[str]
     condition_operator: Optional[str]
     condition_value: Optional[str]
@@ -959,16 +968,19 @@ def get_todays_send_count(db: Session, connection_id: int) -> int:
     ).count()
 
 
-def run_bulk_email_send(db: Session, owner_token: str, bulk_conn: Connection, spreadsheet_id: str,
-                          sheet_range: str, email_column: str, subject_template: str, body_template: str,
-                          condition_column: Optional[str] = None, condition_operator: Optional[str] = None,
-                          condition_value: Optional[str] = None) -> dict:
-    """Core logic: read every row from a Sheet (via our shared service account — the user must have
-    manually Shared the Sheet with it), personalize, send via the user's own Gmail connection."""
-    bulk_config = _json.loads(bulk_conn.config)
+def get_rows_from_source(spreadsheet_id: Optional[str], sheet_range: str, uploaded_rows: Optional[list]) -> tuple:
+    """Returns (headers, data_rows) either by reading a Google Sheet live, or from pre-parsed
+    CSV/Excel data the user uploaded. Exactly one of spreadsheet_id or uploaded_rows must be given."""
+    if uploaded_rows:
+        if len(uploaded_rows) < 2:
+            raise HTTPException(status_code=400, detail="Uploaded file has no data rows (needs a header row plus at least one data row)")
+        return uploaded_rows[0], uploaded_rows[1:]
+
+    if not spreadsheet_id:
+        raise HTTPException(status_code=400, detail="Provide either a Google Sheet link or an uploaded CSV/Excel file")
+
     access_token = get_service_account_access_token()
     sheet_id = extract_spreadsheet_id(spreadsheet_id)
-
     resp = _requests.get(
         f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{sheet_range}",
         headers={"Authorization": f"Bearer {access_token}"}, timeout=15
@@ -981,15 +993,25 @@ def run_bulk_email_send(db: Session, owner_token: str, bulk_conn: Connection, sp
     values = resp.json().get("values", [])
     if len(values) < 2:
         raise HTTPException(status_code=400, detail="Sheet has no data rows (needs a header row plus at least one data row)")
+    return values[0], values[1:]
 
-    headers = values[0]
+
+def run_bulk_email_send(db: Session, owner_token: str, bulk_conn: Connection, spreadsheet_id: Optional[str],
+                          sheet_range: str, email_column: str, subject_template: str, body_template: str,
+                          condition_column: Optional[str] = None, condition_operator: Optional[str] = None,
+                          condition_value: Optional[str] = None, uploaded_rows: Optional[list] = None) -> dict:
+    """Core logic: read every row from a Sheet or uploaded CSV/Excel file, personalize, send via the
+    user's own Gmail connection."""
+    bulk_config = _json.loads(bulk_conn.config)
+    headers, values = get_rows_from_source(spreadsheet_id, sheet_range, uploaded_rows)
+
     if email_column not in headers:
-        raise HTTPException(status_code=400, detail=f"Column '{email_column}' not found in sheet. Found columns: {headers}")
+        raise HTTPException(status_code=400, detail=f"Column '{email_column}' not found. Found columns: {headers}")
 
     results = {"sent": 0, "failed": 0, "skipped_by_condition": 0, "stopped_early_rate_limit": False, "errors": []}
     sent_today = get_todays_send_count(db, bulk_conn.id)
 
-    for row in values[1:]:
+    for row in values:
         if sent_today >= GMAIL_DAILY_SAFETY_LIMIT:
             results["stopped_early_rate_limit"] = True
             results["errors"].append(f"Stopped early — approaching Gmail's daily sending limit ({GMAIL_DAILY_SAFETY_LIMIT}/day). Remaining rows will need to send tomorrow or via a different connection.")
@@ -1045,44 +1067,31 @@ def bulk_send(payload: BulkSendRequest, db: Session = Depends(get_db)):
         db, payload.owner_token, bulk_conn, payload.spreadsheet_id, payload.sheet_range,
         payload.email_column, payload.subject_template, payload.body_template,
         payload.condition_column, payload.condition_operator, payload.condition_value,
+        payload.uploaded_rows,
     )
 
 
-def run_bulk_document_send(db: Session, owner_token: str, bulk_conn: Connection, drive_conn: Connection, spreadsheet_id: str,
+def run_bulk_document_send(db: Session, owner_token: str, bulk_conn: Connection, drive_conn: Connection, spreadsheet_id: Optional[str],
                              sheet_range: str, email_column: str, slides_template_id: str,
                              pdf_filename_template: str, subject_template: str, body_template: str,
                              condition_column: Optional[str] = None, condition_operator: Optional[str] = None,
-                             condition_value: Optional[str] = None, destination_folder_id: Optional[str] = None) -> dict:
+                             condition_value: Optional[str] = None, destination_folder_id: Optional[str] = None,
+                             uploaded_rows: Optional[list] = None) -> dict:
     """Core logic: for every row, duplicate the Slides template (using the user's own Google account via
     drive_conn — this needs real Drive storage, which our shared service account doesn't have), fill it
     in, export as PDF, and email it as an attachment through the user's own Gmail connection (bulk_conn).
     Reading the source Sheet still goes through the service account, since reading needs no storage."""
     bulk_config = _json.loads(bulk_conn.config)
     drive_conn_config = _json.loads(drive_conn.config)
-    access_token = get_service_account_access_token()
-    sheet_id = extract_spreadsheet_id(spreadsheet_id)
+    headers, values = get_rows_from_source(spreadsheet_id, sheet_range, uploaded_rows)
 
-    resp = _requests.get(
-        f"https://sheets.googleapis.com/v4/spreadsheets/{sheet_id}/values/{sheet_range}",
-        headers={"Authorization": f"Bearer {access_token}"}, timeout=15
-    )
-    if not resp.ok:
-        if resp.status_code == 403 or resp.status_code == 404:
-            raise HTTPException(status_code=502, detail=f"Couldn't read the sheet — make sure you've Shared it with {get_service_account_email()}")
-        raise HTTPException(status_code=502, detail=f"Couldn't read the sheet: {resp.text[:200]}")
-
-    values = resp.json().get("values", [])
-    if len(values) < 2:
-        raise HTTPException(status_code=400, detail="Sheet has no data rows")
-
-    headers = values[0]
     if email_column not in headers:
         raise HTTPException(status_code=400, detail=f"Column '{email_column}' not found. Found columns: {headers}")
 
     results = {"sent": 0, "failed": 0, "skipped_by_condition": 0, "stopped_early_rate_limit": False, "errors": []}
     sent_today = get_todays_send_count(db, bulk_conn.id)
 
-    for row in values[1:]:
+    for row in values:
         if sent_today >= GMAIL_DAILY_SAFETY_LIMIT:
             results["stopped_early_rate_limit"] = True
             results["errors"].append(f"Stopped early — approaching Gmail's daily sending limit ({GMAIL_DAILY_SAFETY_LIMIT}/day).")
@@ -1164,7 +1173,7 @@ def bulk_generate_and_send(payload: BulkDocumentSendRequest, db: Session = Depen
         payload.email_column, payload.slides_template_id, payload.pdf_filename_template,
         payload.subject_template, payload.body_template,
         payload.condition_column, payload.condition_operator, payload.condition_value,
-        payload.destination_folder_id,
+        payload.destination_folder_id, payload.uploaded_rows,
     )
 
 
@@ -1665,8 +1674,8 @@ def create_schedule(payload: ScheduleCreate, db: Session = Depends(get_db)):
     else:
         if conn.conn_type not in {"gmail_api", "google"}:
             raise HTTPException(status_code=400, detail="Bulk modes require a Google connection for sending — connect Gmail first")
-        if not payload.spreadsheet_id or not payload.email_column:
-            raise HTTPException(status_code=400, detail="Sheet URL and email column are required for bulk schedules")
+        if not (payload.spreadsheet_id or payload.uploaded_rows) or not payload.email_column:
+            raise HTTPException(status_code=400, detail="A Sheet URL (or uploaded file) and email column are required for bulk schedules")
         if payload.mode == "bulk_document":
             if not payload.slides_template_id:
                 raise HTTPException(status_code=400, detail="A Slides template is required for document-generation schedules")
@@ -1696,6 +1705,7 @@ def create_schedule(payload: ScheduleCreate, db: Session = Depends(get_db)):
         pdf_filename_template=payload.pdf_filename_template,
         drive_connection_id=payload.drive_connection_id,
         destination_folder_id=payload.destination_folder_id,
+        uploaded_rows_json=_json.dumps(payload.uploaded_rows) if payload.uploaded_rows else None,
         condition_column=payload.condition_column,
         condition_operator=payload.condition_operator,
         condition_value=payload.condition_value,
@@ -1958,11 +1968,13 @@ def run_due_schedules(db: Session = Depends(get_db)):
             continue
 
         try:
+            schedule_uploaded_rows = _json.loads(schedule.uploaded_rows_json) if schedule.uploaded_rows_json else None
             if schedule.mode == "bulk_send":
                 bulk_result = run_bulk_email_send(
                     db, schedule.owner_token, conn, schedule.spreadsheet_id, schedule.sheet_range or "A1:Z1000",
                     schedule.email_column, schedule.subject or "", schedule.body,
                     schedule.condition_column, schedule.condition_operator, schedule.condition_value,
+                    schedule_uploaded_rows,
                 )
                 results["ran"] += 1
                 results["errors"].extend(bulk_result.get("errors", []))
@@ -1977,7 +1989,7 @@ def run_due_schedules(db: Session = Depends(get_db)):
                     schedule.email_column, schedule.slides_template_id, schedule.pdf_filename_template or "Document-{{name}}.pdf",
                     schedule.subject or "", schedule.body,
                     schedule.condition_column, schedule.condition_operator, schedule.condition_value,
-                    schedule.destination_folder_id,
+                    schedule.destination_folder_id, schedule_uploaded_rows,
                 )
                 results["ran"] += 1
                 results["errors"].extend(bulk_result.get("errors", []))
