@@ -1338,6 +1338,7 @@ function startGmailConnect(){
 
 // ---------- Google Picker (real file selection — this is what actually grants drive.file access) ----------
 const PICKER_API_KEY = 'AIzaSyBjJaVlsDoG0lsn4uXpIa8HlnDOYlWmfEc';
+const GOOGLE_PROJECT_NUMBER = '189573533657'; // required by setAppId() for drive.file scope to actually grant access to picked files
 let pickerApiLoaded = false;
 
 function loadPickerApi(){
@@ -1376,6 +1377,7 @@ async function openTemplatePicker(context){
   const picker = new google.picker.PickerBuilder()
     .setOAuthToken(accessToken)
     .setDeveloperKey(PICKER_API_KEY)
+    .setAppId(GOOGLE_PROJECT_NUMBER)
     .addView(view)
     .setTitle('Choose your Slides template')
     .setCallback((data) => {
@@ -1403,6 +1405,7 @@ async function openFolderPicker(context){
   const picker = new google.picker.PickerBuilder()
     .setOAuthToken(accessToken)
     .setDeveloperKey(PICKER_API_KEY)
+    .setAppId(GOOGLE_PROJECT_NUMBER)
     .addView(view)
     .setTitle('Choose a folder for generated documents')
     .setCallback((data) => {
