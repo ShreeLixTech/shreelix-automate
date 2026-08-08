@@ -423,10 +423,17 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
           </div>
           <label for="bulk-drive-connection-select">Document creation connection</label>
           <select id="bulk-drive-connection-select"></select>
-          <label for="bulk-slides-template">Google Slides template URL or ID <span class="help-icon" onclick="showContextHelp('slides-template')">?</span></label>
-          <input id="bulk-slides-template" placeholder="https://docs.google.com/presentations/d/...">
+          <label>Slides template <span class="help-icon" onclick="showContextHelp('slides-template')">?</span></label>
+          <button class="btn secondary" type="button" onclick="openTemplatePicker('bulk')">📄 Choose your Slides template</button>
+          <div id="bulk-template-selected" style="display:none;margin-top:8px;padding:8px 12px;background:var(--blue-light);border-radius:8px;font-size:12.5px;color:var(--blue-deep);"></div>
+          <input type="hidden" id="bulk-slides-template">
           <div class="hint">Your Slides template should have <code>{{column_name}}</code> text placeholders matching your sheet's columns — these get replaced per person.</div>
-          <label for="bulk-pdf-filename">PDF filename</label>
+          <label style="margin-top:14px;">Save generated documents to <span style="font-weight:400;color:var(--muted);">(optional)</span></label>
+          <button class="btn secondary" type="button" onclick="openFolderPicker('bulk')">📁 Choose a Drive folder</button>
+          <div id="bulk-folder-selected" style="display:none;margin-top:8px;padding:8px 12px;background:var(--blue-light);border-radius:8px;font-size:12.5px;color:var(--blue-deep);"></div>
+          <input type="hidden" id="bulk-destination-folder">
+          <div class="hint">If you skip this, generated documents just go to your Drive's main folder.</div>
+          <label for="bulk-pdf-filename" style="margin-top:14px;">PDF filename</label>
           <input id="bulk-pdf-filename" placeholder="e.g. Certificate-{{name}}.pdf" value="Document-{{name}}.pdf">
         </div>
 
@@ -487,9 +494,15 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
             </div>
             <label for="sched-drive-connection-select">Document creation connection</label>
             <select id="sched-drive-connection-select"></select>
-            <label for="sched-slides-template">Google Slides template URL or ID</label>
-            <input id="sched-slides-template" placeholder="https://docs.google.com/presentations/d/...">
-            <label for="sched-pdf-filename">PDF filename</label>
+            <label>Slides template</label>
+            <button class="btn secondary" type="button" onclick="openTemplatePicker('sched')">📄 Choose your Slides template</button>
+            <div id="sched-template-selected" style="display:none;margin-top:8px;padding:8px 12px;background:var(--blue-light);border-radius:8px;font-size:12.5px;color:var(--blue-deep);"></div>
+            <input type="hidden" id="sched-slides-template">
+            <label style="margin-top:14px;">Save generated documents to <span style="font-weight:400;color:var(--muted);">(optional)</span></label>
+            <button class="btn secondary" type="button" onclick="openFolderPicker('sched')">📁 Choose a Drive folder</button>
+            <div id="sched-folder-selected" style="display:none;margin-top:8px;padding:8px 12px;background:var(--blue-light);border-radius:8px;font-size:12.5px;color:var(--blue-deep);"></div>
+            <input type="hidden" id="sched-destination-folder">
+            <label for="sched-pdf-filename" style="margin-top:14px;">PDF filename</label>
             <input id="sched-pdf-filename" placeholder="e.g. Certificate-{{name}}.pdf" value="Document-{{name}}.pdf">
           </div>
           <div style="margin-top:14px;display:flex;align-items:center;gap:8px;">
@@ -810,6 +823,7 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
 <div class="toast" id="toast"></div>
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
+<script src="https://apis.google.com/js/api.js"></script>
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <script>
 const API = "https://shreelix-automate-api.onrender.com";
@@ -1238,8 +1252,8 @@ const GOOGLE_REDIRECT_URI = "https://automate.shreelix.com/automate.html";
 // ---------- Preserve in-progress form data across the OAuth redirect ----------
 // Connecting Google is a full-page redirect (to Google and back), which would otherwise wipe out
 // anything the user already typed on the Bulk Merge or Schedule forms. Save it first, restore after.
-const BULK_FORM_FIELDS = ['bulk-sheet-url', 'bulk-email-column', 'bulk-use-condition', 'bulk-cond-column', 'bulk-cond-operator', 'bulk-cond-value', 'bulk-attach-doc', 'bulk-slides-template', 'bulk-pdf-filename', 'bulk-subject'];
-const SCHED_FORM_FIELDS = ['sched-name', 'sched-mode', 'sched-to', 'sched-sheet-url', 'sched-email-column', 'sched-slides-template', 'sched-pdf-filename', 'sched-use-condition', 'sched-cond-column', 'sched-cond-operator', 'sched-cond-value', 'sched-subject', 'sched-frequency', 'sched-date', 'sched-time'];
+const BULK_FORM_FIELDS = ['bulk-sheet-url', 'bulk-email-column', 'bulk-use-condition', 'bulk-cond-column', 'bulk-cond-operator', 'bulk-cond-value', 'bulk-attach-doc', 'bulk-slides-template', 'bulk-destination-folder', 'bulk-pdf-filename', 'bulk-subject'];
+const SCHED_FORM_FIELDS = ['sched-name', 'sched-mode', 'sched-to', 'sched-sheet-url', 'sched-email-column', 'sched-slides-template', 'sched-destination-folder', 'sched-pdf-filename', 'sched-use-condition', 'sched-cond-column', 'sched-cond-operator', 'sched-cond-value', 'sched-subject', 'sched-frequency', 'sched-date', 'sched-time'];
 
 function saveFormStateBeforeOAuth(){
   const activeTab = document.querySelector('.tab.active');
@@ -1280,6 +1294,21 @@ function restoreFormStateAfterOAuth(){
       // Re-trigger dependent field visibility (e.g. "attach document" fields, mode-specific sections)
       if (document.getElementById('bulk-attach-doc')) toggleDocFields();
       if (document.getElementById('sched-mode')) onSchedModeChange();
+
+      // Show a generic confirmation if a template/folder was already picked before the redirect —
+      // we only saved the ID, not the display name, so this can't show the exact file name again
+      ['bulk', 'sched'].forEach(ctx => {
+        const templateVal = document.getElementById(`${ctx}-slides-template`);
+        if (templateVal && templateVal.value) {
+          const el = document.getElementById(`${ctx}-template-selected`);
+          if (el) { el.textContent = '✓ Template already selected'; el.style.display = 'block'; }
+        }
+        const folderVal = document.getElementById(`${ctx}-destination-folder`);
+        if (folderVal && folderVal.value) {
+          const el = document.getElementById(`${ctx}-folder-selected`);
+          if (el) { el.textContent = '✓ Folder already selected'; el.style.display = 'block'; }
+        }
+      });
     }, 150); // small delay so the tab switch's own DOM updates settle first
   } catch(e) { /* non-critical — worst case, the user just re-fills the form */ }
 }
@@ -1305,6 +1334,88 @@ function startGmailConnect(){
   });
   saveFormStateBeforeOAuth();
   window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
+}
+
+// ---------- Google Picker (real file selection — this is what actually grants drive.file access) ----------
+const PICKER_API_KEY = 'AIzaSyBjJaVlsDoG0lsn4uXpIa8HlnDOYlWmfEc';
+let pickerApiLoaded = false;
+
+function loadPickerApi(){
+  return new Promise((resolve, reject) => {
+    if (pickerApiLoaded) { resolve(); return; }
+    if (!window.gapi) { reject(new Error('Google API library not loaded yet — try again in a moment')); return; }
+    gapi.load('picker', {
+      callback: () => { pickerApiLoaded = true; resolve(); },
+      onerror: () => reject(new Error('Could not load the Google Picker')),
+    });
+  });
+}
+
+async function getPickerAccessToken(context){
+  const driveConnId = document.getElementById(`${context}-drive-connection-select`).value;
+  if (!driveConnId) { toast('Connect Google for Document Creation first', true); return null; }
+  try {
+    const result = await api('/bulk/picker-token', {method:'POST', body: JSON.stringify({
+      owner_token: USER_TOKEN, drive_connection_id: parseInt(driveConnId),
+    })});
+    return result.access_token;
+  } catch(e) {
+    toast("Couldn't prepare the file picker: " + e.message, true);
+    return null;
+  }
+}
+
+async function openTemplatePicker(context){
+  const accessToken = await getPickerAccessToken(context);
+  if (!accessToken) return;
+  try { await loadPickerApi(); } catch(e) { toast(e.message, true); return; }
+
+  const view = new google.picker.DocsView(google.picker.ViewId.PRESENTATIONS)
+    .setMode(google.picker.DocsViewMode.LIST);
+
+  const picker = new google.picker.PickerBuilder()
+    .setOAuthToken(accessToken)
+    .setDeveloperKey(PICKER_API_KEY)
+    .addView(view)
+    .setTitle('Choose your Slides template')
+    .setCallback((data) => {
+      if (data.action === google.picker.Action.PICKED) {
+        const file = data.docs[0];
+        document.getElementById(`${context}-slides-template`).value = file.id;
+        const selectedEl = document.getElementById(`${context}-template-selected`);
+        selectedEl.textContent = '✓ Selected: ' + file.name;
+        selectedEl.style.display = 'block';
+      }
+    })
+    .build();
+  picker.setVisible(true);
+}
+
+async function openFolderPicker(context){
+  const accessToken = await getPickerAccessToken(context);
+  if (!accessToken) return;
+  try { await loadPickerApi(); } catch(e) { toast(e.message, true); return; }
+
+  const view = new google.picker.DocsView(google.picker.ViewId.FOLDERS)
+    .setSelectFolderEnabled(true)
+    .setMode(google.picker.DocsViewMode.LIST);
+
+  const picker = new google.picker.PickerBuilder()
+    .setOAuthToken(accessToken)
+    .setDeveloperKey(PICKER_API_KEY)
+    .addView(view)
+    .setTitle('Choose a folder for generated documents')
+    .setCallback((data) => {
+      if (data.action === google.picker.Action.PICKED) {
+        const folder = data.docs[0];
+        document.getElementById(`${context}-destination-folder`).value = folder.id;
+        const selectedEl = document.getElementById(`${context}-folder-selected`);
+        selectedEl.textContent = '✓ Saving to: ' + folder.name;
+        selectedEl.style.display = 'block';
+      }
+    })
+    .build();
+  picker.setVisible(true);
 }
 
 function startDriveConnect(){
@@ -1603,12 +1714,13 @@ async function runBulkSend(){
   if (!sheetUrl || !emailColumn || !getEditorText('bulk-body')) { toast('Fill in the sheet, email column, and message', true); return; }
   if (useCondition && (!condColumn || !condValue)) { toast('Fill in the condition column and value, or turn the condition off', true); return; }
 
-  let slidesTemplateId, pdfFilenameTemplate, driveConnId;
+  let slidesTemplateId, pdfFilenameTemplate, driveConnId, destinationFolderId;
   if (attachDoc) {
     slidesTemplateId = document.getElementById('bulk-slides-template').value.trim();
     pdfFilenameTemplate = document.getElementById('bulk-pdf-filename').value.trim() || 'Document-{{name}}.pdf';
     driveConnId = document.getElementById('bulk-drive-connection-select').value;
-    if (!slidesTemplateId) { toast('Paste your Slides template URL or ID', true); return; }
+    destinationFolderId = document.getElementById('bulk-destination-folder').value.trim() || null;
+    if (!slidesTemplateId) { toast('Choose your Slides template first — see the button above', true); return; }
     if (!driveConnId) { toast('Connect Google for Document Creation first — see the box above', true); return; }
   }
 
@@ -1623,6 +1735,7 @@ async function runBulkSend(){
     const body = attachDoc ? {
       owner_token: USER_TOKEN, bulk_connection_id: parseInt(connId), drive_connection_id: parseInt(driveConnId), spreadsheet_id: sheetUrl,
       email_column: emailColumn, slides_template_id: slidesTemplateId, pdf_filename_template: pdfFilenameTemplate,
+      destination_folder_id: destinationFolderId,
       subject_template: subjectTemplate, body_template: bodyTemplate, ...conditionFields,
     } : {
       owner_token: USER_TOKEN, bulk_connection_id: parseInt(connId), spreadsheet_id: sheetUrl,
@@ -1825,6 +1938,7 @@ async function createSchedule(){
   const slidesTemplate = document.getElementById('sched-slides-template').value.trim();
   const pdfFilename = document.getElementById('sched-pdf-filename').value.trim();
   const driveConnId = document.getElementById('sched-drive-connection-select') ? document.getElementById('sched-drive-connection-select').value : null;
+  const destinationFolderId = document.getElementById('sched-destination-folder') ? (document.getElementById('sched-destination-folder').value.trim() || null) : null;
   const useCondition = document.getElementById('sched-use-condition').checked;
   const condColumn = useCondition ? document.getElementById('sched-cond-column').value.trim() : null;
   const condOperator = useCondition ? document.getElementById('sched-cond-operator').value : null;
@@ -1834,7 +1948,7 @@ async function createSchedule(){
   if (!name) { toast('Give this schedule a name', true); return; }
   if (mode === 'single' && ['smtp', 'gmail_api', 'google'].includes(connType) && !toAddress) { toast('Enter who to send this to', true); return; }
   if (mode !== 'single' && (!sheetUrl || !emailColumn)) { toast('Fill in the Sheet URL and email column', true); return; }
-  if (mode === 'bulk_document' && !slidesTemplate) { toast('Paste your Slides template URL', true); return; }
+  if (mode === 'bulk_document' && !slidesTemplate) { toast('Choose your Slides template first — see the button above', true); return; }
   if (mode === 'bulk_document' && !driveConnId) { toast('Connect Google for Document Creation first — see the box above', true); return; }
   if (!getEditorText('sched-body')) { toast('Write a message', true); return; }
   if (frequency === 'once' && !scheduledDate) { toast('Pick a date for a one-time schedule', true); return; }
@@ -1855,6 +1969,7 @@ async function createSchedule(){
       slides_template_id: mode === 'bulk_document' ? slidesTemplate : null,
       pdf_filename_template: mode === 'bulk_document' ? (pdfFilename || 'Document-{{name}}.pdf') : null,
       drive_connection_id: mode === 'bulk_document' ? parseInt(driveConnId) : null,
+      destination_folder_id: mode === 'bulk_document' ? destinationFolderId : null,
       condition_column: mode !== 'single' ? condColumn : null,
       condition_operator: mode !== 'single' ? condOperator : null,
       condition_value: mode !== 'single' ? condValue : null,
