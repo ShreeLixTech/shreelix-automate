@@ -364,7 +364,7 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
   <!-- BULK MERGE -->
   <div class="panel" id="panel-bulk">
     <div class="step-guide">
-      <b>Sending to many people at once?</b> Use your regular Gmail connection from the Connections tab to send — then just <b>Share your Google Sheet</b> (and Slides template, if using one) with the special email address below, so we're allowed to read it. Paste the Sheet link, preview its columns, and write your message using <code>{{column_name}}</code> for anything that should change per person.
+      <b>Sending to many people at once?</b> Use your regular Gmail connection from the Connections tab to send — then just <b>Share your Google Sheet</b> with the special email address below, so we're allowed to read it. If you're also attaching a generated document, that's a separate step — you'll pick your Slides template directly through Google's own file picker, not by sharing it. Paste the Sheet link, preview its columns, and write your message using <code>{{column_name}}</code> for anything that should change per person.
     </div>
     <div class="grid2">
       <div class="card">
@@ -381,7 +381,7 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
             <code id="bulkServiceAccountEmail" style="font-size:12px;color:var(--blue-deep);word-break:break-all;">Loading…</code>
             <button class="btn small secondary" style="flex-shrink:0;" onclick="copyServiceAccountEmail()">Copy</button>
           </div>
-          <div class="hint">Open your Google Sheet → Share → paste this email → give it "Viewer" access. Do the same for your Slides template if attaching documents. This lets us read the file without needing your full Google account connected.</div>
+          <div class="hint">Open your Google Sheet → Share → paste this email → give it "Viewer" access. This lets us read your row data without needing your full Google account connected. If you're generating documents from a Slides template too, that's a separate connection below — you'll pick the template directly through Google's file picker, not by sharing it here.</div>
         </div>
       </div>
       <div class="card">
@@ -785,8 +785,8 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
     </div>
 
     <div class="faq-item">
-      <div class="faq-q">What's the difference between "Gmail" and "Bulk Merge" connections?</div>
-      <div class="faq-a">Gmail (in the Connections tab) lets you send single messages to one person at a time in Compose & Send. Bulk Merge is a separate, broader connection needed only if you want to email everyone in a Google Sheet at once, optionally attaching a personalized document from Google Slides.</div>
+      <div class="faq-q">What's the difference between "Gmail" and "Document Creation" connections?</div>
+      <div class="faq-a">Gmail (in the Connections tab) lets you send messages — one at a time in Compose & Send, or to everyone in a Sheet via Bulk Merge. "Document Creation" is a separate connection, only needed if you're attaching a personalized document from Google Slides — it uses your own Google Drive storage to create the files, which sending email alone doesn't need.</div>
     </div>
     <div class="faq-item">
       <div class="faq-q">What are the <code>{{curly braces}}</code> for?</div>
@@ -1169,7 +1169,7 @@ const HELP_CONTENT = {
   },
   'slides-template': {
     title: 'How does the personalized document work?',
-    body: 'Design one document in Google Slides — like a certificate — with {{placeholders}} in it matching your Sheet\'s columns. Share that Slides file with the same special email shown on this page, the same way you shared your Sheet. ShreeLix Automate automatically creates one unique, filled-in copy for every person and attaches it to their message.'
+    body: 'Design one document in Google Slides — like a certificate — with {{placeholders}} in it matching your Sheet\'s columns. Connect Google for Document Creation (separate from your Gmail connection, since creating new files needs your own Drive storage), then pick that Slides file directly through the "Choose your Slides template" button — this opens Google\'s own file picker, so there\'s no sharing step needed. ShreeLix Automate automatically creates one unique, filled-in copy for every person and attaches it to their message.'
   },
   'inbound-trigger': {
     title: 'How does an inbound trigger actually work?',
