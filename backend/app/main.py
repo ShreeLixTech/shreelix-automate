@@ -112,6 +112,7 @@ class Schedule(Base):
     email_column = Column(String, nullable=True)
     slides_template_id = Column(String, nullable=True)  # used only when mode="bulk_document"
     pdf_filename_template = Column(String, nullable=True)
+    drive_connection_id = Column(Integer, ForeignKey("connections.id"), nullable=True)  # used only when mode="bulk_document" — separate Google connection with Drive access for creating the document
     # Optional per-row condition for bulk modes — skip a row unless it passes. Blank = send to every row.
     condition_column = Column(String, nullable=True)
     condition_operator = Column(String, nullable=True)  # "equals", "not_equals", "greater_than", "less_than", "contains"
@@ -269,7 +270,8 @@ class BulkSendRequest(BaseModel):
 
 class BulkDocumentSendRequest(BaseModel):
     owner_token: str
-    bulk_connection_id: int
+    bulk_connection_id: int  # the Gmail connection used to send the emails
+    drive_connection_id: int  # the separate Google connection (drive.file + presentations scope) used to create the document
     spreadsheet_id: str
     sheet_range: str = "A1:Z1000"
     email_column: str
@@ -298,6 +300,7 @@ class ScheduleCreate(BaseModel):
     email_column: Optional[str] = None
     slides_template_id: Optional[str] = None
     pdf_filename_template: Optional[str] = None
+    drive_connection_id: Optional[int] = None  # required when mode="bulk_document" — separate connection with Drive access
     condition_column: Optional[str] = None
     condition_operator: Optional[str] = None
     condition_value: Optional[str] = None
@@ -322,6 +325,7 @@ class ScheduleOut(BaseModel):
     email_column: Optional[str]
     slides_template_id: Optional[str]
     pdf_filename_template: Optional[str]
+    drive_connection_id: Optional[int]
     condition_column: Optional[str]
     condition_operator: Optional[str]
     condition_value: Optional[str]
@@ -738,9 +742,12 @@ def mask_connection_detail(conn_type: str, config: dict) -> str:
     if conn_type == "gmail_api":
         email = config.get("email", "your Gmail account")
         return f"{email} (Official Gmail API)"
-    if conn_type in {"google_bulk", "google"}:
+    if conn_type == "google":
         email = config.get("email", "your Google account")
-        return f"{email} (Gmail — Sheets/Slides for Bulk Merge use a separate shared connection)"
+        return f"{email} (Gmail — for sending)"
+    if conn_type == "google_bulk":
+        email = config.get("email", "your Google account")
+        return f"{email} (Document creation — Drive & Slides)"
     return "Unknown connection"
 
 
@@ -837,7 +844,7 @@ def google_bulk_oauth_callback(payload: BulkGoogleOAuthCallback, db: Session = D
     db_conn = Connection(
         owner_token=payload.owner_token,
         name=payload.connection_name,
-        conn_type="google",
+        conn_type="google_bulk",
         config=_json.dumps(config),
     )
     db.add(db_conn)
@@ -1007,8 +1014,8 @@ def bulk_send(payload: BulkSendRequest, db: Session = Depends(get_db)):
     bulk_conn = db.query(Connection).filter(
         Connection.id == payload.bulk_connection_id, Connection.owner_token == payload.owner_token
     ).first()
-    if not bulk_conn or bulk_conn.conn_type not in {"gmail_api", "google", "google_bulk"}:
-        raise HTTPException(status_code=404, detail="Bulk Google connection not found")
+    if not bulk_conn or bulk_conn.conn_type not in {"gmail_api", "google"}:
+        raise HTTPException(status_code=404, detail="Gmail connection (for sending) not found")
     return run_bulk_email_send(
         db, payload.owner_token, bulk_conn, payload.spreadsheet_id, payload.sheet_range,
         payload.email_column, payload.subject_template, payload.body_template,
@@ -1016,15 +1023,17 @@ def bulk_send(payload: BulkSendRequest, db: Session = Depends(get_db)):
     )
 
 
-def run_bulk_document_send(db: Session, owner_token: str, bulk_conn: Connection, spreadsheet_id: str,
+def run_bulk_document_send(db: Session, owner_token: str, bulk_conn: Connection, drive_conn: Connection, spreadsheet_id: str,
                              sheet_range: str, email_column: str, slides_template_id: str,
                              pdf_filename_template: str, subject_template: str, body_template: str,
                              condition_column: Optional[str] = None, condition_operator: Optional[str] = None,
                              condition_value: Optional[str] = None) -> dict:
-    """Core logic: for every row, duplicate the Slides template (via our shared service account —
-    the user must have Shared both the Sheet and the Slides template with it), fill it in, export as
-    PDF, and email it as an attachment through the user's own Gmail connection."""
+    """Core logic: for every row, duplicate the Slides template (using the user's own Google account via
+    drive_conn — this needs real Drive storage, which our shared service account doesn't have), fill it
+    in, export as PDF, and email it as an attachment through the user's own Gmail connection (bulk_conn).
+    Reading the source Sheet still goes through the service account, since reading needs no storage."""
     bulk_config = _json.loads(bulk_conn.config)
+    drive_conn_config = _json.loads(drive_conn.config)
     access_token = get_service_account_access_token()
     sheet_id = extract_spreadsheet_id(spreadsheet_id)
 
@@ -1077,7 +1086,7 @@ def run_bulk_document_send(db: Session, owner_token: str, bulk_conn: Connection,
         copy_id = None
         row_access_token = None
         try:
-            row_access_token = get_service_account_access_token()
+            row_access_token = get_fresh_access_token(drive_conn_config["refresh_token"])
             slides_id = extract_spreadsheet_id(slides_template_id)
             copy_id = duplicate_slides_template(row_access_token, slides_id, f"temp-{filename}")
             fill_slides_placeholders(row_access_token, copy_id, row_dict)
@@ -1112,10 +1121,21 @@ def bulk_generate_and_send(payload: BulkDocumentSendRequest, db: Session = Depen
     bulk_conn = db.query(Connection).filter(
         Connection.id == payload.bulk_connection_id, Connection.owner_token == payload.owner_token
     ).first()
-    if not bulk_conn or bulk_conn.conn_type not in {"gmail_api", "google", "google_bulk"}:
-        raise HTTPException(status_code=404, detail="Bulk Google connection not found")
+    if not bulk_conn or bulk_conn.conn_type not in {"gmail_api", "google"}:
+        raise HTTPException(status_code=404, detail="Gmail connection (for sending) not found")
+
+    drive_conn = db.query(Connection).filter(
+        Connection.id == payload.drive_connection_id, Connection.owner_token == payload.owner_token
+    ).first()
+    if not drive_conn or drive_conn.conn_type != "google_bulk":
+        raise HTTPException(
+            status_code=404,
+            detail="Document creation connection not found — use \"Connect Google for Document Creation\" first, "
+                   "since creating new files needs your own Google Drive storage, not just Gmail access.",
+        )
+
     return run_bulk_document_send(
-        db, payload.owner_token, bulk_conn, payload.spreadsheet_id, payload.sheet_range,
+        db, payload.owner_token, bulk_conn, drive_conn, payload.spreadsheet_id, payload.sheet_range,
         payload.email_column, payload.slides_template_id, payload.pdf_filename_template,
         payload.subject_template, payload.body_template,
         payload.condition_column, payload.condition_operator, payload.condition_value,
@@ -1368,7 +1388,7 @@ def send_message(payload: SendMessageRequest, db: Session = Depends(get_db)):
             if not payload.to_address:
                 raise ValueError("An email address to send to is required")
             send_via_smtp(config, payload.subject or "", payload.body, payload.to_address)
-        elif conn.conn_type in {"gmail_api", "google", "google_bulk"}:
+        elif conn.conn_type in {"gmail_api", "google"}:
             if not payload.to_address:
                 raise ValueError("An email address to send to is required")
             send_via_gmail_api(config, payload.subject or "", payload.body, payload.to_address)
@@ -1613,12 +1633,20 @@ def create_schedule(payload: ScheduleCreate, db: Session = Depends(get_db)):
         if conn.conn_type in {"smtp", "gmail_api"} and not payload.to_address:
             raise HTTPException(status_code=400, detail="An email address to send to is required for this connection type")
     else:
-        if conn.conn_type not in {"gmail_api", "google", "google_bulk"}:
+        if conn.conn_type not in {"gmail_api", "google"}:
             raise HTTPException(status_code=400, detail="Bulk modes require a Google connection for sending — connect Gmail first")
         if not payload.spreadsheet_id or not payload.email_column:
             raise HTTPException(status_code=400, detail="Sheet URL and email column are required for bulk schedules")
-        if payload.mode == "bulk_document" and not payload.slides_template_id:
-            raise HTTPException(status_code=400, detail="A Slides template is required for document-generation schedules")
+        if payload.mode == "bulk_document":
+            if not payload.slides_template_id:
+                raise HTTPException(status_code=400, detail="A Slides template is required for document-generation schedules")
+            if not payload.drive_connection_id:
+                raise HTTPException(status_code=400, detail="A document-creation connection is required — use \"Connect Google for Document Creation\" first")
+            drive_conn = db.query(Connection).filter(
+                Connection.id == payload.drive_connection_id, Connection.owner_token == payload.owner_token,
+            ).first()
+            if not drive_conn or drive_conn.conn_type != "google_bulk":
+                raise HTTPException(status_code=404, detail="Document-creation connection not found")
 
     db_schedule = Schedule(
         owner_token=payload.owner_token,
@@ -1636,6 +1664,7 @@ def create_schedule(payload: ScheduleCreate, db: Session = Depends(get_db)):
         email_column=payload.email_column,
         slides_template_id=payload.slides_template_id,
         pdf_filename_template=payload.pdf_filename_template,
+        drive_connection_id=payload.drive_connection_id,
         condition_column=payload.condition_column,
         condition_operator=payload.condition_operator,
         condition_value=payload.condition_value,
@@ -1731,7 +1760,7 @@ def create_inbound_webhook(payload: InboundWebhookCreate, db: Session = Depends(
     conn = db.query(Connection).filter(Connection.id == payload.connection_id, Connection.owner_token == payload.owner_token).first()
     if not conn:
         raise HTTPException(status_code=404, detail="Connection not found")
-    if conn.conn_type in {"smtp", "gmail_api", "google", "google_bulk"} and not payload.to_address:
+    if conn.conn_type in {"smtp", "gmail_api", "google"} and not payload.to_address:
         raise HTTPException(status_code=400, detail="An email address to send to is required for this connection type")
 
     token = _secrets.token_urlsafe(24)
@@ -1864,7 +1893,7 @@ def execute_single_send(db: Session, owner_token: str, conn: Connection, subject
     config = _json.loads(conn.config)
     if conn.conn_type == "smtp":
         send_via_smtp(config, subject or "", body, to_address)
-    elif conn.conn_type in {"gmail_api", "google", "google_bulk"}:
+    elif conn.conn_type in {"gmail_api", "google"}:
         send_via_gmail_api(config, subject or "", body, to_address)
     elif conn.conn_type == "webhook":
         send_via_webhook(config, subject or "", body)
@@ -1907,8 +1936,13 @@ def run_due_schedules(db: Session = Depends(get_db)):
                 results["ran"] += 1
                 results["errors"].extend(bulk_result.get("errors", []))
             elif schedule.mode == "bulk_document":
+                drive_conn = db.query(Connection).filter(Connection.id == schedule.drive_connection_id).first()
+                if not drive_conn:
+                    results["failed"] += 1
+                    results["errors"].append(f"Schedule '{schedule.name}': document-creation connection missing or was disconnected")
+                    continue
                 bulk_result = run_bulk_document_send(
-                    db, schedule.owner_token, conn, schedule.spreadsheet_id, schedule.sheet_range or "A1:Z1000",
+                    db, schedule.owner_token, conn, drive_conn, schedule.spreadsheet_id, schedule.sheet_range or "A1:Z1000",
                     schedule.email_column, schedule.slides_template_id, schedule.pdf_filename_template or "Document-{{name}}.pdf",
                     schedule.subject or "", schedule.body,
                     schedule.condition_column, schedule.condition_operator, schedule.condition_value,
