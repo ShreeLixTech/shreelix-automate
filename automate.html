@@ -385,10 +385,24 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
         </div>
       </div>
       <div class="card">
-        <h3>Send to everyone in a Sheet</h3>
-        <label for="bulk-sheet-url">Google Sheet URL or ID <span class="help-icon" onclick="showContextHelp('sheet-url')">?</span></label>
-        <input id="bulk-sheet-url" placeholder="https://docs.google.com/spreadsheets/d/...">
-        <button class="btn secondary" onclick="previewSheet()">Preview columns</button>
+        <h3>Send to everyone in a list</h3>
+        <div style="display:flex;gap:8px;margin-bottom:14px;">
+          <button type="button" class="btn secondary" id="bulk-source-sheet-btn" onclick="setBulkDataSource('sheet')" style="flex:1;margin-top:0;">📊 Google Sheet</button>
+          <button type="button" class="btn secondary" id="bulk-source-upload-btn" onclick="setBulkDataSource('upload')" style="flex:1;margin-top:0;">📁 Upload CSV/Excel</button>
+        </div>
+
+        <div id="bulk-source-sheet-wrap">
+          <label for="bulk-sheet-url">Google Sheet URL or ID <span class="help-icon" onclick="showContextHelp('sheet-url')">?</span></label>
+          <input id="bulk-sheet-url" placeholder="https://docs.google.com/spreadsheets/d/...">
+          <button class="btn secondary" onclick="previewSheet()">Preview columns</button>
+        </div>
+
+        <div id="bulk-source-upload-wrap" style="display:none;">
+          <label for="bulk-file-upload">Upload a CSV or Excel file</label>
+          <input type="file" id="bulk-file-upload" accept=".csv,.xlsx,.xls" onchange="handleBulkFileUpload(event)">
+          <div class="hint">First row should be column headers (like "name", "email") — same idea as a Google Sheet.</div>
+        </div>
+
         <div id="bulk-preview" style="margin-top:12px;font-size:13px;color:var(--muted);"></div>
 
         <label for="bulk-email-column">Which column has the email address?</label>
@@ -484,8 +498,20 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
         </div>
 
         <div id="sched-bulk-wrap" style="display:none;">
-          <label for="sched-sheet-url">Google Sheet URL or ID</label>
-          <input id="sched-sheet-url" placeholder="https://docs.google.com/spreadsheets/d/...">
+          <div style="display:flex;gap:8px;margin-bottom:14px;">
+            <button type="button" class="btn secondary" id="sched-source-sheet-btn" onclick="setSchedDataSource('sheet')" style="flex:1;margin-top:0;">📊 Google Sheet</button>
+            <button type="button" class="btn secondary" id="sched-source-upload-btn" onclick="setSchedDataSource('upload')" style="flex:1;margin-top:0;">📁 Upload CSV/Excel</button>
+          </div>
+          <div id="sched-source-sheet-wrap">
+            <label for="sched-sheet-url">Google Sheet URL or ID</label>
+            <input id="sched-sheet-url" placeholder="https://docs.google.com/spreadsheets/d/...">
+          </div>
+          <div id="sched-source-upload-wrap" style="display:none;">
+            <label for="sched-file-upload">Upload a CSV or Excel file</label>
+            <input type="file" id="sched-file-upload" accept=".csv,.xlsx,.xls" onchange="handleSchedFileUpload(event)">
+            <div id="sched-upload-status" style="font-size:12.5px;color:var(--muted);margin-top:8px;"></div>
+            <div class="hint">⚠️ This data is saved with the schedule and reused every time it runs — it won't automatically pick up changes. Re-upload a new file here (and save) whenever you need to update the list.</div>
+          </div>
           <label for="sched-email-column">Which column has the email address?</label>
           <input id="sched-email-column" placeholder="e.g. email">
           <div id="sched-slides-wrap" style="display:none;">
@@ -824,6 +850,7 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
 
 <script src="https://accounts.google.com/gsi/client" async defer></script>
 <script src="https://apis.google.com/js/api.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
 <script src="https://checkout.razorpay.com/v1/checkout.js"></script>
 <script>
 const API = "https://shreelix-automate-api.onrender.com";
@@ -1576,6 +1603,90 @@ function populateDriveConnectionDropdown(){
   select.innerHTML = driveConns.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join('');
 }
 
+// ---------- Schedule: Google Sheet vs uploaded CSV/Excel as the data source ----------
+let schedDataSourceMode = 'sheet';
+let schedUploadedRows = null;
+
+function setSchedDataSource(mode){
+  schedDataSourceMode = mode;
+  document.getElementById('sched-source-sheet-wrap').style.display = mode === 'sheet' ? 'block' : 'none';
+  document.getElementById('sched-source-upload-wrap').style.display = mode === 'upload' ? 'block' : 'none';
+  document.getElementById('sched-source-sheet-btn').style.background = mode === 'sheet' ? 'var(--blue-light)' : '';
+  document.getElementById('sched-source-upload-btn').style.background = mode === 'upload' ? 'var(--blue-light)' : '';
+}
+
+function handleSchedFileUpload(event){
+  const file = event.target.files[0];
+  const statusEl = document.getElementById('sched-upload-status');
+  if (!file) return;
+
+  statusEl.textContent = 'Reading file…';
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, {type: 'array'});
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, {header: 1, defval: '', raw: false});
+      if (rows.length < 2) {
+        statusEl.innerHTML = `<span style="color:var(--red);">This file has no data rows.</span>`;
+        schedUploadedRows = null;
+        return;
+      }
+      schedUploadedRows = rows.map(row => row.map(cell => String(cell ?? '')));
+      const headers = schedUploadedRows[0];
+      statusEl.innerHTML = `Found <b>${schedUploadedRows.length - 1}</b> rows in <b>${escapeHtml(file.name)}</b>. Columns: ${headers.map(h => `<code>{{${escapeHtml(h)}}}</code>`).join(', ')}`;
+    } catch(err) {
+      statusEl.innerHTML = `<span style="color:var(--red);">Couldn't read this file — make sure it's a valid CSV or Excel file.</span>`;
+      schedUploadedRows = null;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
+// ---------- Bulk Merge: Google Sheet vs uploaded CSV/Excel as the data source ----------
+let bulkDataSourceMode = 'sheet';
+let bulkUploadedRows = null; // parsed [[headers...], [row1...], [row2...]] once a file is uploaded
+
+function setBulkDataSource(mode){
+  bulkDataSourceMode = mode;
+  document.getElementById('bulk-source-sheet-wrap').style.display = mode === 'sheet' ? 'block' : 'none';
+  document.getElementById('bulk-source-upload-wrap').style.display = mode === 'upload' ? 'block' : 'none';
+  document.getElementById('bulk-source-sheet-btn').style.background = mode === 'sheet' ? 'var(--blue-light)' : '';
+  document.getElementById('bulk-source-upload-btn').style.background = mode === 'upload' ? 'var(--blue-light)' : '';
+  document.getElementById('bulk-preview').innerHTML = '';
+}
+
+function handleBulkFileUpload(event){
+  const file = event.target.files[0];
+  const previewEl = document.getElementById('bulk-preview');
+  if (!file) return;
+
+  previewEl.textContent = 'Reading file…';
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    try {
+      const data = new Uint8Array(e.target.result);
+      const workbook = XLSX.read(data, {type: 'array'});
+      const sheet = workbook.Sheets[workbook.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, {header: 1, defval: '', raw: false});
+      if (rows.length < 2) {
+        previewEl.innerHTML = `<span style="color:var(--red);">This file has no data rows — needs a header row plus at least one data row.</span>`;
+        bulkUploadedRows = null;
+        return;
+      }
+      // Normalize every value to a string, since the backend expects text rows the same way Sheets provides them
+      bulkUploadedRows = rows.map(row => row.map(cell => String(cell ?? '')));
+      const headers = bulkUploadedRows[0];
+      previewEl.innerHTML = `Found <b>${bulkUploadedRows.length - 1}</b> rows in <b>${escapeHtml(file.name)}</b>. Columns: ${headers.map(h => `<code>{{${escapeHtml(h)}}}</code>`).join(', ')}`;
+    } catch(err) {
+      previewEl.innerHTML = `<span style="color:var(--red);">Couldn't read this file — make sure it's a valid CSV or Excel file.</span>`;
+      bulkUploadedRows = null;
+    }
+  };
+  reader.readAsArrayBuffer(file);
+}
+
 async function previewSheet(){
   const connId = document.getElementById('bulk-connection-select').value;
   const sheetUrl = document.getElementById('bulk-sheet-url').value.trim();
@@ -1618,25 +1729,33 @@ async function dryRunBulkPreview(){
   const resultEl = document.getElementById('bulk-dryrun-result');
 
   if (!connId) { toast('Connect and select a Google account first', true); return; }
-  if (!sheetUrl) { toast('Paste a Google Sheet URL first', true); return; }
+  if (bulkDataSourceMode === 'sheet' && !sheetUrl) { toast('Paste a Google Sheet URL first', true); return; }
+  if (bulkDataSourceMode === 'upload' && !bulkUploadedRows) { toast('Upload a CSV/Excel file first', true); return; }
   if (!getEditorText('bulk-body')) { toast('Write a message first', true); return; }
 
   resultEl.style.display = 'block';
   resultEl.innerHTML = 'Loading a real row to preview…';
   // This is intentionally free — no consumeToken() here — so you can safely check before spending credits on the real send.
   try {
-    const result = await api('/bulk/sheet-rows', {method:'POST', body: JSON.stringify({
-      connection_id: parseInt(connId), owner_token: USER_TOKEN, spreadsheet_id: sheetUrl,
-    })});
-    if (result.rows.length === 0) {
-      resultEl.innerHTML = `<span style="color:var(--red);">Sheet has no data rows to preview.</span>`;
+    let rows;
+    if (bulkDataSourceMode === 'upload') {
+      const headers = bulkUploadedRows[0];
+      rows = bulkUploadedRows.slice(1).map(row => Object.fromEntries(headers.map((h, i) => [h, row[i] ?? ''])));
+    } else {
+      const result = await api('/bulk/sheet-rows', {method:'POST', body: JSON.stringify({
+        connection_id: parseInt(connId), owner_token: USER_TOKEN, spreadsheet_id: sheetUrl,
+      })});
+      rows = result.rows;
+    }
+    if (rows.length === 0) {
+      resultEl.innerHTML = `<span style="color:var(--red);">No data rows to preview.</span>`;
       return;
     }
 
-    let previewRow = result.rows[0];
+    let previewRow = rows[0];
     let matchNote = '';
     if (condColumn) {
-      const matching = result.rows.find(r => evaluateConditionClientSide(r[condColumn], condOperator, condValue));
+      const matching = rows.find(r => evaluateConditionClientSide(r[condColumn], condOperator, condValue));
       if (!matching) {
         resultEl.innerHTML = `<span style="color:#B8720C;">⚠️ No row currently matches your condition — nothing would be sent right now.</span>`;
         return;
@@ -1714,7 +1833,9 @@ async function runBulkSend(){
   resultEl.textContent = '';
 
   if (!connId) { toast('Connect and select a Google account first', true); return; }
-  if (!sheetUrl || !emailColumn || !getEditorText('bulk-body')) { toast('Fill in the sheet, email column, and message', true); return; }
+  if (bulkDataSourceMode === 'sheet' && !sheetUrl) { toast('Paste a Google Sheet URL first', true); return; }
+  if (bulkDataSourceMode === 'upload' && !bulkUploadedRows) { toast('Upload a CSV/Excel file first', true); return; }
+  if (!emailColumn || !getEditorText('bulk-body')) { toast('Fill in the email column and message', true); return; }
   if (useCondition && (!condColumn || !condValue)) { toast('Fill in the condition column and value, or turn the condition off', true); return; }
 
   let slidesTemplateId, pdfFilenameTemplate, driveConnId, destinationFolderId;
@@ -1728,20 +1849,23 @@ async function runBulkSend(){
   }
 
   if (!(await consumeToken())) return;
-  if (!confirm('This will send a personalized message to every matching row in the sheet. Continue?')) return;
+  if (!confirm('This will send a personalized message to every matching row. Continue?')) return;
 
   const btn = document.getElementById('bulkSendBtn');
   btn.disabled = true; btn.textContent = attachDoc ? 'Generating & sending documents…' : 'Sending to all rows…';
   try {
     const endpoint = attachDoc ? '/bulk/generate-and-send' : '/bulk/send';
     const conditionFields = { condition_column: condColumn, condition_operator: condOperator, condition_value: condValue };
+    const sourceFields = bulkDataSourceMode === 'upload'
+      ? { spreadsheet_id: null, uploaded_rows: bulkUploadedRows }
+      : { spreadsheet_id: sheetUrl, uploaded_rows: null };
     const body = attachDoc ? {
-      owner_token: USER_TOKEN, bulk_connection_id: parseInt(connId), drive_connection_id: parseInt(driveConnId), spreadsheet_id: sheetUrl,
+      owner_token: USER_TOKEN, bulk_connection_id: parseInt(connId), drive_connection_id: parseInt(driveConnId), ...sourceFields,
       email_column: emailColumn, slides_template_id: slidesTemplateId, pdf_filename_template: pdfFilenameTemplate,
       destination_folder_id: destinationFolderId,
       subject_template: subjectTemplate, body_template: bodyTemplate, ...conditionFields,
     } : {
-      owner_token: USER_TOKEN, bulk_connection_id: parseInt(connId), spreadsheet_id: sheetUrl,
+      owner_token: USER_TOKEN, bulk_connection_id: parseInt(connId), ...sourceFields,
       email_column: emailColumn, subject_template: subjectTemplate, body_template: bodyTemplate, ...conditionFields,
     };
     const result = await api(endpoint, {method:'POST', body: JSON.stringify(body)});
@@ -1817,11 +1941,12 @@ async function deleteConnection(id, name){
 // ---------- Compose & Send ----------
 function populateSendConnectionDropdown(){
   const select = document.getElementById('send-connection');
-  if (connections.length === 0) {
+  const sendConns = connections.filter(c => ['smtp', 'gmail_api', 'google', 'webhook', 'http'].includes(c.conn_type));
+  if (sendConns.length === 0) {
     select.innerHTML = `<option value="">No connections yet — add one first</option>`;
     return;
   }
-  select.innerHTML = connections.map(c => `<option value="${c.id}" data-type="${c.conn_type}">${escapeHtml(c.name)} (${c.conn_type})</option>`).join('');
+  select.innerHTML = sendConns.map(c => `<option value="${c.id}" data-type="${c.conn_type}">${escapeHtml(c.name)} (${c.conn_type})</option>`).join('');
   onSendConnectionChange();
 }
 function onSendConnectionChange(){
@@ -1870,11 +1995,12 @@ document.getElementById('sendBtn').addEventListener('click', async () => {
 // ---------- Schedules ----------
 function populateSchedConnectionDropdown(){
   const select = document.getElementById('sched-connection');
-  if (connections.length === 0) {
-    select.innerHTML = `<option value="">No connections yet — add one in Connections tab first</option>`;
+  const sendConns = connections.filter(c => ['smtp', 'gmail_api', 'google'].includes(c.conn_type));
+  if (sendConns.length === 0) {
+    select.innerHTML = `<option value="">No sending connection yet — add Gmail in Connections tab first</option>`;
     return;
   }
-  select.innerHTML = connections.map(c => `<option value="${c.id}" data-type="${c.conn_type}">${escapeHtml(c.name)} (${c.conn_type === 'gmail_api' ? 'gmail' : c.conn_type})</option>`).join('');
+  select.innerHTML = sendConns.map(c => `<option value="${c.id}" data-type="${c.conn_type}">${escapeHtml(c.name)} (${c.conn_type === 'gmail_api' ? 'gmail' : c.conn_type})</option>`).join('');
   onSchedConnectionChange();
 }
 function onSchedConnectionChange(){
@@ -1950,7 +2076,9 @@ async function createSchedule(){
   if (!connId) { toast('Choose a connection first', true); return; }
   if (!name) { toast('Give this schedule a name', true); return; }
   if (mode === 'single' && ['smtp', 'gmail_api', 'google'].includes(connType) && !toAddress) { toast('Enter who to send this to', true); return; }
-  if (mode !== 'single' && (!sheetUrl || !emailColumn)) { toast('Fill in the Sheet URL and email column', true); return; }
+  if (mode !== 'single' && schedDataSourceMode === 'sheet' && !sheetUrl) { toast('Paste a Google Sheet URL, or switch to file upload', true); return; }
+  if (mode !== 'single' && schedDataSourceMode === 'upload' && !schedUploadedRows) { toast('Upload a CSV/Excel file, or switch to Google Sheet', true); return; }
+  if (mode !== 'single' && !emailColumn) { toast('Fill in the email column', true); return; }
   if (mode === 'bulk_document' && !slidesTemplate) { toast('Choose your Slides template first — see the button above', true); return; }
   if (mode === 'bulk_document' && !driveConnId) { toast('Connect Google for Document Creation first — see the box above', true); return; }
   if (!getEditorText('sched-body')) { toast('Write a message', true); return; }
@@ -1962,12 +2090,15 @@ async function createSchedule(){
   const btn = document.getElementById('createScheduleBtn');
   btn.disabled = true; btn.textContent = 'Creating…';
   try {
+    const schedSourceFields = (mode !== 'single' && schedDataSourceMode === 'upload')
+      ? { spreadsheet_id: null, uploaded_rows: schedUploadedRows }
+      : { spreadsheet_id: mode !== 'single' ? sheetUrl : null, uploaded_rows: null };
     const newSchedule = await api('/schedules', {method:'POST', body: JSON.stringify({
       owner_token: USER_TOKEN, connection_id: parseInt(connId), name, mode,
       to_address: mode === 'single' ? (toAddress || null) : null,
       subject: subject || null, body,
       frequency, scheduled_time: scheduledTime, scheduled_date: frequency === 'once' ? scheduledDate : null,
-      spreadsheet_id: mode !== 'single' ? sheetUrl : null,
+      ...schedSourceFields,
       email_column: mode !== 'single' ? emailColumn : null,
       slides_template_id: mode === 'bulk_document' ? slidesTemplate : null,
       pdf_filename_template: mode === 'bulk_document' ? (pdfFilename || 'Document-{{name}}.pdf') : null,
@@ -2022,7 +2153,7 @@ let extraStepCounter = 0;
 function addExtraStepBlock(){
   extraStepCounter++;
   const blockId = 'extra-step-' + extraStepCounter;
-  const connOptions = connections.map(c => `<option value="${c.id}" data-type="${c.conn_type}">${escapeHtml(c.name)} (${c.conn_type === 'gmail_api' || c.conn_type === 'google' ? 'gmail' : c.conn_type})</option>`).join('');
+  const connOptions = connections.filter(c => ['smtp', 'gmail_api', 'google', 'webhook', 'http'].includes(c.conn_type)).map(c => `<option value="${c.id}" data-type="${c.conn_type}">${escapeHtml(c.name)} (${c.conn_type === 'gmail_api' || c.conn_type === 'google' ? 'gmail' : c.conn_type})</option>`).join('');
 
   const block = document.createElement('div');
   block.className = 'extra-step-block';
@@ -2101,7 +2232,7 @@ let currentStepsScheduleId = null;
 function openStepsModal(scheduleId, scheduleName){
   currentStepsScheduleId = scheduleId;
   document.getElementById('stepsScheduleName').textContent = scheduleName;
-  document.getElementById('step-connection').innerHTML = connections.map(c => `<option value="${c.id}" data-type="${c.conn_type}">${escapeHtml(c.name)} (${c.conn_type === 'gmail_api' || c.conn_type === 'google' ? 'gmail' : c.conn_type})</option>`).join('');
+  document.getElementById('step-connection').innerHTML = connections.filter(c => ['smtp', 'gmail_api', 'google', 'webhook', 'http'].includes(c.conn_type)).map(c => `<option value="${c.id}" data-type="${c.conn_type}">${escapeHtml(c.name)} (${c.conn_type === 'gmail_api' || c.conn_type === 'google' ? 'gmail' : c.conn_type})</option>`).join('');
   onStepConnectionChange();
   document.getElementById('step-to').value = '';
   document.getElementById('step-subject').value = '';
@@ -2200,7 +2331,7 @@ const AUTOMATE_API_BASE = API;
 function populateInboundConnectionDropdown(){
   const select = document.getElementById('inbound-connection');
   if (!select) return;
-  select.innerHTML = connections.map(c => `<option value="${c.id}" data-type="${c.conn_type}">${escapeHtml(c.name)} (${c.conn_type === 'gmail_api' || c.conn_type === 'google' ? 'gmail' : c.conn_type})</option>`).join('');
+  select.innerHTML = connections.filter(c => ['smtp', 'gmail_api', 'google', 'webhook', 'http'].includes(c.conn_type)).map(c => `<option value="${c.id}" data-type="${c.conn_type}">${escapeHtml(c.name)} (${c.conn_type === 'gmail_api' || c.conn_type === 'google' ? 'gmail' : c.conn_type})</option>`).join('');
   onInboundConnectionChange();
 }
 function onInboundConnectionChange(){
