@@ -1235,6 +1235,55 @@ function selectConnType(type){
 // ---------- Gmail OAuth (official API — the recommended, working path) ----------
 const GOOGLE_REDIRECT_URI = "https://automate.shreelix.com/automate.html";
 
+// ---------- Preserve in-progress form data across the OAuth redirect ----------
+// Connecting Google is a full-page redirect (to Google and back), which would otherwise wipe out
+// anything the user already typed on the Bulk Merge or Schedule forms. Save it first, restore after.
+const BULK_FORM_FIELDS = ['bulk-sheet-url', 'bulk-email-column', 'bulk-use-condition', 'bulk-cond-column', 'bulk-cond-operator', 'bulk-cond-value', 'bulk-attach-doc', 'bulk-slides-template', 'bulk-pdf-filename', 'bulk-subject'];
+const SCHED_FORM_FIELDS = ['sched-name', 'sched-mode', 'sched-to', 'sched-sheet-url', 'sched-email-column', 'sched-slides-template', 'sched-pdf-filename', 'sched-use-condition', 'sched-cond-column', 'sched-cond-operator', 'sched-cond-value', 'sched-subject', 'sched-frequency', 'sched-date', 'sched-time'];
+
+function saveFormStateBeforeOAuth(){
+  const activeTab = document.querySelector('.tab.active');
+  const tabName = activeTab ? activeTab.dataset.tab : null;
+  if (tabName !== 'bulk' && tabName !== 'schedules') return; // only these two tabs have forms worth preserving
+
+  const fields = tabName === 'bulk' ? BULK_FORM_FIELDS : SCHED_FORM_FIELDS;
+  const state = { tab: tabName, values: {} };
+  fields.forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    state.values[id] = (el.type === 'checkbox') ? el.checked : el.value;
+  });
+  const bodyId = tabName === 'bulk' ? 'bulk-body' : 'sched-body';
+  const bodyEl = document.getElementById(bodyId);
+  if (bodyEl) state.values[bodyId] = bodyEl.innerHTML;
+
+  sessionStorage.setItem('shreelix_pending_form_state', JSON.stringify(state));
+}
+
+function restoreFormStateAfterOAuth(){
+  const saved = sessionStorage.getItem('shreelix_pending_form_state');
+  if (!saved) return;
+  sessionStorage.removeItem('shreelix_pending_form_state');
+  try {
+    const state = JSON.parse(saved);
+    const tabEl = document.querySelector(`.tab[data-tab="${state.tab}"]`);
+    if (tabEl) tabEl.click(); // switches to the right tab using the app's own existing tab-switch logic
+
+    setTimeout(() => {
+      Object.entries(state.values).forEach(([id, value]) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        if (el.hasAttribute('contenteditable')) el.innerHTML = value;
+        else if (el.type === 'checkbox') { el.checked = value; el.dispatchEvent(new Event('change')); }
+        else el.value = value;
+      });
+      // Re-trigger dependent field visibility (e.g. "attach document" fields, mode-specific sections)
+      if (document.getElementById('bulk-attach-doc')) toggleDocFields();
+      if (document.getElementById('sched-mode')) onSchedModeChange();
+    }, 150); // small delay so the tab switch's own DOM updates settle first
+  } catch(e) { /* non-critical — worst case, the user just re-fills the form */ }
+}
+
 function startGmailConnect(){
   if (!isSignedIn()) { toast('Please sign in first', true); return; }
   const name = document.getElementById('gmail-conn-name').value.trim() || 'My Google Account';
@@ -1254,6 +1303,7 @@ function startGmailConnect(){
     prompt: 'consent',
     state: USER_TOKEN,
   });
+  saveFormStateBeforeOAuth();
   window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
 }
 
@@ -1277,6 +1327,7 @@ function startDriveConnect(){
     prompt: 'consent',
     state: USER_TOKEN + '|bulk',
   });
+  saveFormStateBeforeOAuth();
   window.location.href = 'https://accounts.google.com/o/oauth2/v2/auth?' + params.toString();
 }
 
@@ -1303,6 +1354,7 @@ async function handleGmailOAuthRedirect(){
     toast('Connected successfully');
     loadConnections();
     populateBulkConnectionDropdown();
+    restoreFormStateAfterOAuth();
   } catch(e) {
     toast('Connection failed: ' + e.message, true);
   }
