@@ -805,6 +805,15 @@ Content-Type: application/json" style="min-height:70px;"></textarea>
 const API = "https://shreelix-automate-api.onrender.com";
 let connections = [];
 
+// The backend sends timestamps without a UTC marker (e.g. "2026-08-06T09:23:00"), which JS would
+// otherwise wrongly treat as already-local time. Appending 'Z' forces correct UTC interpretation,
+// so toLocaleString/toLocaleDateString/comparisons then correctly convert to the viewer's local time.
+function parseUTCDate(dateStr){
+  if (!dateStr) return null;
+  const hasTZ = /Z$|[+-]\d{2}:?\d{2}$/.test(dateStr);
+  return new Date(hasTZ ? dateStr : dateStr + 'Z');
+}
+
 function toast(msg, isError=false){
   const t = document.getElementById('toast');
   t.textContent = msg;
@@ -1003,14 +1012,14 @@ async function refreshTokenStatus(){
 }
 
 function isProActive(){
-  return cachedSubscriptionStatus === 'paid' && cachedSubscriptionExpiresAt && new Date(cachedSubscriptionExpiresAt) > new Date();
+  return cachedSubscriptionStatus === 'paid' && cachedSubscriptionExpiresAt && parseUTCDate(cachedSubscriptionExpiresAt) > new Date();
 }
 
 function updateTokenBadge(){
   const badge = document.getElementById('tokenBadge');
   if (!badge) return;
   if (isProActive()){
-    const expiryDate = new Date(cachedSubscriptionExpiresAt).toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'});
+    const expiryDate = parseUTCDate(cachedSubscriptionExpiresAt).toLocaleDateString('en-IN', {day:'numeric', month:'short', year:'numeric'});
     badge.innerHTML = `✨ Pro — active until ${expiryDate}`;
   } else {
     const left = Math.max(0, FREE_TOKEN_LIMIT - cachedTokensUsed);
@@ -1283,7 +1292,7 @@ async function loadDashboard(){
     const sentTotal = logs.filter(l => l.status === 'sent').length;
     const failedTotal = logs.filter(l => l.status === 'failed').length;
     const todayStr = new Date().toDateString();
-    const sentToday = logs.filter(l => l.status === 'sent' && new Date(l.created_at).toDateString() === todayStr).length;
+    const sentToday = logs.filter(l => l.status === 'sent' && parseUTCDate(l.created_at).toDateString() === todayStr).length;
 
     document.getElementById('dashSentTotal').textContent = sentTotal;
     document.getElementById('dashSentToday').textContent = sentToday;
@@ -1301,7 +1310,7 @@ async function loadDashboard(){
             <td>${escapeHtml(l.connection_name || '—')}</td>
             <td>${escapeHtml(l.subject || '—')}</td>
             <td><span class="badge ${l.status}">${l.status}</span></td>
-            <td style="color:var(--muted);font-size:12.5px;">${new Date(l.created_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'})}</td>
+            <td style="color:var(--muted);font-size:12.5px;">${parseUTCDate(l.created_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'})}</td>
           </tr>
         `).join('')}</tbody>
       </table>`;
@@ -1813,7 +1822,7 @@ async function loadSchedules(){
     }
     wrap.innerHTML = schedules.map(s => {
       const freqLabel = s.frequency === 'daily' ? `Every day at ${s.scheduled_time}` : `Once on ${s.scheduled_date} at ${s.scheduled_time}`;
-      const lastRun = s.last_run_at ? new Date(s.last_run_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'}) : 'Never run yet';
+      const lastRun = s.last_run_at ? parseUTCDate(s.last_run_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'}) : 'Never run yet';
       const modeLabel = s.mode === 'bulk_document' ? '📄 Bulk + document' : s.mode === 'bulk_send' ? '📊 Bulk (Sheet)' : '✉️ Single recipient';
       const retryNote = s.retry_count > 0 ? `<span style="color:var(--red);"> · Retrying (attempt ${s.retry_count}/${s.max_retries})</span>` : '';
       return `
@@ -2017,7 +2026,7 @@ async function loadInboundWebhooks(){
     }
     wrap.innerHTML = hooks.map(h => {
       const fullUrl = AUTOMATE_API_BASE + '/inbound/' + h.token;
-      const lastFired = h.last_triggered_at ? new Date(h.last_triggered_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'}) : 'Never fired yet';
+      const lastFired = h.last_triggered_at ? parseUTCDate(h.last_triggered_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'}) : 'Never fired yet';
       return `
         <div class="conn-row" style="flex-direction:column;align-items:stretch;">
           <div style="display:flex;justify-content:space-between;align-items:flex-start;">
@@ -2086,7 +2095,7 @@ async function loadHistory(){
           <td>${escapeHtml(l.subject||'—')}</td>
           <td style="color:var(--muted);font-size:12.5px;max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">${escapeHtml(l.body_preview||'')}</td>
           <td><span class="badge ${l.status}">${l.status}</span></td>
-          <td style="color:var(--muted);font-size:12.5px;">${new Date(l.created_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'})}</td>
+          <td style="color:var(--muted);font-size:12.5px;">${parseUTCDate(l.created_at).toLocaleString('en-IN', {dateStyle:'medium', timeStyle:'short'})}</td>
         </tr>
       `).join('')}</tbody>
     </table>`;
